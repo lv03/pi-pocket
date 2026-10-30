@@ -63,6 +63,7 @@ const ORDER = [
     "ask-someone.ts",
     "updates.ts",
     "design.ts",
+    "context-insight.ts",
 ];
 
 /** The built-in modules' names (their files' without `.ts`): a drop-in with one of them is never loaded. */
@@ -78,6 +79,7 @@ const OFF_BY_DEFAULT = new Set([
     "anthropic-subscription.ts",
     "session-tags.ts",
     "ask-someone.ts",
+    "context-insight.ts",
 ]);
 const TITLES: Record<string, string> = {
     "prompt.ts": "System prompt",
@@ -100,6 +102,7 @@ const TITLES: Record<string, string> = {
     "ask-someone.ts": "Ask someone",
     "updates.ts": "Pi Pocket updates",
     "design.ts": "Design",
+    "context-insight.ts": "Context Insight",
 };
 
 /**

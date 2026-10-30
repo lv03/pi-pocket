@@ -47,6 +47,14 @@ The native extension loader registers one scoped resolve hook for drop-in import
 
 Extensions never see `PocketApp`. They get `PocketHost` (`host.ts`), whose functions call into the app lazily, and `web`, through which they add routes and a browser module to the app. `ExtensionWebs` (`extension-web.ts`) keeps what each module's version added, which the loader commits once the module installed and removes with it, running its cleanups. The HTTP layer parses a request, checks it, calls a part, and writes the answer; it holds no state of its own beyond invites and the event streams' pollers.
 
+## Context Insight
+
+Context Insight (`extensions/context-insight.ts`) is an optional built-in extension for the owner only. It is in `OFF_BY_DEFAULT`; new installs require the owner to enable it. Existing enable choices remain keyed by the module filename, `context-insight.ts`. A drop-in with that filename is excluded by the loader.
+
+Its routes use the existing transcript and usage read API supplied by `http/extension-routes.ts` and `transcripts.ts`. The pure helper `context-insight.ts` folds stored entries into the view model. The extension adds no tools or model requests. Category splits are estimates; stored response usage supplies the measured totals.
+
+Each loaded version owns its derived cache and app-event listeners. Reads for one conversation run in sequence. The cache retains at most 6 sessions and 40000 entries per session. A clipped history still follows new entries, but earlier history is absent from its derived views. Disabling or replacing the version clears its cache and removes its listeners through `web.onDispose`. A restart discards this memory; stored conversations remain the source. Changes to the core fold helper require a server restart.
+
 ## Favorite folders
 
 `FolderFavoritesDoc` (`pocket.folder-favorites`) stores each person's ordered favorite working folders in SQLite. `folder-favorites.ts` reads and changes only the signed-in person's list; explicit star/unstar operations run inside one harness transaction, so concurrent devices do not overwrite unrelated changes. The commit coordinator sends each connected client only its person's list as a `folder-favorites` event. `hello.folderFavorites` supplies the initial list and refreshes it on reconnect. The folder picker shows only what the server committed, so a failed save leaves its list as it was.
