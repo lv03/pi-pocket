@@ -18,7 +18,9 @@
 }
 
 .ci {
+    container: context-insight / inline-size;
     box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
     display: flex;
     flex-direction: column;
@@ -183,8 +185,9 @@
 
 .ci-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
-    overflow-x: auto;
+    overflow-x: visible;
     scrollbar-width: none;
     padding-bottom: 2px;
 }
@@ -829,7 +832,7 @@
     font-size: 11px;
 }
 
-@media (min-width: 720px) {
+@container context-insight (min-width: 560px) {
     .ci-legend {
         grid-template-columns: 1fr 1fr;
         column-gap: 14px;

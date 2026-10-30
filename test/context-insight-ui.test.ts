@@ -237,6 +237,32 @@ test(
 
         assert.equal(panelShot, "/tmp/context-insight-ui-shots/context-panel-mobile.jpg");
 
+        // A docked panel can be narrow inside a wide viewport. Its layout must follow the panel width,
+        // rather than the desktop viewport's width.
+        await page.setViewport(VIEWPORTS.desktop);
+        await settleVisual();
+        const dockLayout = await inPage<{ kpis: string; legend: string; overflow: boolean }>(`
+            const panel = document.querySelector(".ext-panel .ci");
+            const kpis = panel?.querySelector(".ci-kpis");
+            const legend = panel?.querySelector(".ci-legend");
+            const panelWidth = panel?.getBoundingClientRect().width ?? 0;
+            return JSON.stringify({
+                kpis: getComputedStyle(kpis).gridTemplateColumns,
+                legend: getComputedStyle(legend).gridTemplateColumns,
+                overflow: panelWidth > 0 && panel.scrollWidth > panel.clientWidth + 1,
+            });
+        `);
+
+        assert.equal(dockLayout.kpis.split(" ").length, 2, "narrow dock uses a 2-column KPI grid");
+        assert.equal(
+            dockLayout.legend.split(" ").length,
+            1,
+            "narrow dock uses one category column",
+        );
+        assert.equal(dockLayout.overflow, false, "narrow dock has no horizontal overflow");
+        await page.setViewport(VIEWPORTS.mobile);
+        await settleVisual();
+
         // Sections, schemas, and user parts must expand to the exact server detail, not a clipped preview.
         await tab("Items");
         await until(
