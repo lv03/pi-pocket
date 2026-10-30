@@ -18,6 +18,8 @@
 }
 
 .ci {
+    box-sizing: border-box;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -61,8 +63,8 @@
 }
 
 .ci-icon {
-    width: 34px;
-    height: 34px;
+    width: 40px;
+    height: 40px;
     border: 1px solid var(--line);
     border-radius: 9px;
     background: transparent;
@@ -193,7 +195,7 @@
 
 .ci-tab {
     flex: 0 0 auto;
-    min-height: 32px;
+    min-height: 40px;
     padding: 0 10px;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -807,7 +809,7 @@
 }
 
 .ci-button {
-    min-height: 34px;
+    min-height: 40px;
     padding: 0 12px;
     border: 1px solid var(--line);
     border-radius: 9px;
@@ -1004,5 +1006,265 @@
 
     .ci-kpis {
         grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+.ci button,
+.ci summary,
+.ci input,
+.ci select {
+    min-height: 40px;
+}
+
+.ci :is(input, select) {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--card);
+    color: var(--text);
+    padding: 6px 9px;
+    font: inherit;
+}
+
+.ci .ci-toolbar > select {
+    width: auto;
+    max-width: 100%;
+}
+.ci :is(button, summary, input, select):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.ci button:disabled {
+    opacity: 0.55;
+}
+.ci-inset {
+    padding: 8px 10px;
+}
+.ci-paging {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+}
+.ci-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+.ci-filters > input[type="search"] {
+    grid-column: 1 / -1;
+}
+.ci-details {
+    min-width: 0;
+    border-top: 1px solid var(--line);
+    padding: 6px 10px;
+    overflow-wrap: anywhere;
+}
+.ci-details > summary {
+    cursor: pointer;
+    padding: 8px 0;
+    box-sizing: border-box;
+}
+.ci-details > summary code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+.ci-details .ci-details {
+    padding-left: 8px;
+    padding-right: 0;
+}
+.ci-detail {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 8px;
+    padding: 10px;
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+}
+.ci-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ci-table-wrap {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+}
+.ci-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.ci-table :is(th, td) {
+    text-align: right;
+    padding: 7px 9px;
+    border-bottom: 1px solid var(--line);
+}
+.ci-table th {
+    color: var(--muted);
+    font-weight: 500;
+}
+.ci-table :is(th, td):first-child {
+    text-align: left;
+}
+.ci-table tr[data-selected="1"] {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.ci-ribbon {
+    min-width: 0;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+}
+.ci-ribbon svg {
+    display: block;
+    min-height: 44px;
+    touch-action: none;
+    cursor: crosshair;
+}
+.ci-brush {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.ci-brush label {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+.ci input[type="range"] {
+    padding: 0;
+    border: 0;
+    accent-color: var(--accent);
+    touch-action: none;
+}
+.ci-chart {
+    min-width: 0;
+}
+.ci-chart svg {
+    min-width: 560px;
+}
+.ci-dna {
+    display: flex;
+    margin: 0 10px;
+    min-width: 0;
+    height: 42px;
+    background: var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.ci-dna button {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-right: 1px solid var(--bg);
+    border-radius: 0;
+    cursor: pointer;
+}
+.ci-dna button[aria-pressed="true"] {
+    box-shadow: inset 0 0 0 2px var(--text);
+    filter: brightness(1.25);
+}
+.ci-heat {
+    grid-template-rows: repeat(7, 40px);
+    grid-auto-columns: 40px;
+    gap: 2px;
+}
+.ci-heat button {
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0;
+    background: var(--line);
+    cursor: pointer;
+}
+.ci-heat button[data-level="1"] {
+    background: color-mix(in srgb, var(--accent) 25%, var(--line));
+}
+.ci-heat button[data-level="2"] {
+    background: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.ci-heat button[data-level="3"] {
+    background: color-mix(in srgb, var(--accent) 70%, var(--line));
+}
+.ci-heat button[data-level="4"] {
+    background: var(--accent);
+}
+.ci-heat button[aria-pressed="true"] {
+    outline: 2px solid var(--text);
+    outline-offset: -3px;
+}
+.ci-days {
+    display: flex;
+    gap: 4px;
+    height: 120px;
+}
+.ci-days button {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+}
+.ci-days i {
+    display: block;
+    width: 100%;
+    background: var(--accent);
+    border-radius: 4px 4px 0 0;
+}
+.ci-days button[aria-pressed="true"] i {
+    outline: 2px solid var(--text);
+}
+.ci progress {
+    width: 100%;
+    accent-color: var(--accent);
+}
+.ci-foot,
+.ci-step,
+.ci-event-kind {
+    overflow-wrap: anywhere;
+}
+.ci-event-kind {
+    flex-wrap: wrap;
+    min-width: 0;
+}
+.ci-foot {
+    flex-wrap: wrap;
+}
+
+@media (max-width: 430px) {
+    .ci-board-row {
+        grid-template-columns: 8px 1fr auto;
+    }
+    .ci-board-task {
+        grid-column: 2 / -1;
+        white-space: normal;
+    }
+    .ci-board-time {
+        grid-column: 2;
+    }
+    .ci-agent-head {
+        flex-wrap: wrap;
+    }
+    .ci-head-actions {
+        flex-wrap: wrap;
     }
 }

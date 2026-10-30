@@ -1,5 +1,17 @@
 /** Numbers, money, and times as the dashboard shows them. */
 
+export function duration(value) {
+    if (!Number.isFinite(value)) {
+        return "—";
+    }
+
+    return value < 1000
+        ? `${Math.round(value)} ms`
+        : value < 60000
+          ? `${(value / 1000).toFixed(1)} s`
+          : `${(value / 60000).toFixed(1)} min`;
+}
+
 export function fmt(value) {
     const number = Number(value ?? 0);
 

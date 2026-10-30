@@ -431,6 +431,13 @@ test("commands preserve failure, output, and duration; subagent calls preserve t
         ms: 100,
         entry: 2,
         output: "done",
+        fullOutput: "done\nmore",
+        contentComplete: true,
+        outputRecorded: true,
+        callId: "call-1",
+        startedAt: 100,
+        endedAt: 200,
+        durationMethod: "entry-timestamps",
     });
     assert.equal(model.comms[0]!.text, "check files");
     assert.equal(model.comms[0]!.dir, "to");

@@ -241,6 +241,15 @@ interface WebRequest {
     readonly context: Context;
     commit<T>(change: (tx: Tx) => T | Promise<T>): Promise<T>;
     sessions(): readonly WebSession[];
+    modelContextOf(
+        conversation: number,
+        options?: ModelContextOptions,
+    ): Promise<ModelContextSnapshot>;
+    subagentsOf(conversation: number): readonly WebSubagent[];
+    relationships(): readonly WebRelationship[];
+    toolActivityOf(conversation: number): Promise<readonly ToolActivityRow[]>;
+    usageHistoryOf(conversation: number): Promise<UsageHistory>;
+    requestHistoryOf(conversation: number): Promise<readonly ModelRequestCapture[]>;
 }
 ```
 
@@ -260,6 +269,7 @@ What a handler gets.
 - Since 0.20.0 (experimental), `sessions()` gives the sessions that the person who asked can see now, as their session list shows them, archived ones too. See [`WebSession`](#websession). Use it to check the ids that a browser sends, and to keep data about sessions from people who cannot see them. Each call reads the list again.
 - Since 0.26.0 (experimental), `transcriptOf(conversation, options)` and `usageOf(conversation)` read any conversation the person who asked may see: a session, or a subagent of one. They are the same reads as a [`ConversationWebRequest`](#conversationwebrequest) gives for its own conversation, and answer 404 for a conversation the person may not see, 400 for an id that is not a positive whole number. Use them with [`transcript`](#transcriptoptions) and [`usage`](#conversationwebrequest), for example to show a subagent's own work.
 - Since 0.26.0 (experimental), `imageOf(conversation, entry, index)` gives one image of a stored message, as `{ mimeType, data }` with `data` in base64, or undefined when the entry has no such image. The person must see the conversation, as for `transcriptOf`.
+- Since 0.26.0 (experimental), `toolActivityOf(conversation)` reads stored nested tool calls for a visible conversation. It checks visibility before and after the asynchronous Durable read. A bound route uses `toolActivity()` for its source conversation.
 
 ### `WebSession`
 
@@ -289,6 +299,8 @@ interface ConversationWebRequest extends WebRequest {
         readonly thinkingLevel: ModelThinkingLevel;
     };
     readonly linkedSessions: HumanLinkedSessions;
+    toolActivity(): Promise<readonly ToolActivityRow[]>;
+    modelContext(options?: ModelContextOptions): Promise<ModelContextSnapshot>;
     transcript(options?: TranscriptOptions): Promise<TranscriptPage>;
     usage(): Promise<UsageState | undefined>;
     subagents(): readonly WebSubagent[];
@@ -302,8 +314,68 @@ Authoritative source metadata, plus request-lifetime human linked-session capabi
 Since 0.26.0, experimental, it also reads this conversation's stored transcript and its usage totals. Both read only the bound conversation, which the server already checked that the person may see.
 
 - `transcript(options)`: a page of the conversation's stored entries, oldest first: its own and those it inherited from a fork, with the ones a compaction removed. Each message and each part carries `tokens`, the figure Pi's own meter counts for it, so a dashboard matches the context ring. Image bytes are left out; an image keeps only its type and the tokens the meter counts for it. `full: false` (the default) clips long text for reading, and `tokens` still counts all of it. Read pages with `after` until `more` is false. A page holds 100 entries by default and 200 at most.
+- `toolActivity()`: stored nested tool calls for this conversation. Each row has the immediate parent call ID and the root model call ID when task ancestry retains it, exact nested call arguments, lifecycle status, task timestamps, and a duration. `result` is present when the live parent task or enabled inspection capture retains its `NestedCallDoc` result; `result.structuredOutput` remains structured data and is never treated as complete text. `outputRecorded` says that a structured output value exists, while `resultAvailable` says that a result object exists. Image bytes are omitted from metadata, and hidden values keep their existing redaction.
 - `usage()`: the conversation's `pi.usage` totals, by `provider/model` and by tool, with cost. Undefined before the first response.
-- `subagents()`: the subagents this session started, each with its own conversation, which a person can open. Empty when it started none. See [`WebSubagent`](#websubagent).
+- `modelContext(options)`: native Durable context at the current tail or at a visible entry. See [`ModelContextSnapshot`](#modelcontextsnapshot).
+- `subagents()`: every direct subagent this session started, including all finished agents. This read has no board cap. Each has its own conversation, which a person can open. Empty when it started none. See [`WebSubagent`](#websubagent).
+
+### `ToolActivityRow`
+
+```ts
+interface ToolActivityRow {
+    readonly taskId: number;
+    readonly parentTaskId: number;
+    readonly callId: string;
+    readonly parentCallId: string;
+    readonly rootCallId?: string;
+    readonly toolName: string;
+    readonly arguments: unknown;
+    readonly status: ToolActivityStatus;
+    readonly startedAt?: number;
+    readonly endedAt?: number;
+    readonly durationMs?: number;
+    readonly result?: ToolActivityResult;
+    readonly outputRecorded: boolean;
+    readonly resultAvailable: boolean;
+}
+```
+
+Since 0.26.0 · Experimental
+
+One nested call retained in the target conversation's Durable task records. `status` is `pending`, `running`, `completed`, `failed`, `aborted`, `orphaned`, or `faulted`. `rootCallId` is found by following public task ancestry to the model-issued call; the implementation never splits call IDs. A missing result is expected for old calls because `NestedCallDoc` retires with its parent task. While Context Insight is enabled, core retains available result metadata before retirement. Pocket codemode uses separate direct-call metadata rather than Durable nested tasks; it records arguments, timing, result metadata, and bounded text with explicit omitted-character counts while the extension is selected.
+
+`arguments` is the exact nested task input after the normal metadata projection. `result` contains only stored structured result fields: `isError`, `structuredOutput`, `details`, `diagnostics`, `usage`, and `durationMs`. `structuredOutput` is not a complete text output. `outputRecorded` is true only when that field exists. `resultAvailable` is true when the result object exists. Image bytes are omitted from metadata.
+
+### `ToolActivityStatus`
+
+```ts
+type ToolActivityStatus =
+    "pending" | "running" | "completed" | "failed" | "aborted" | "orphaned" | "faulted";
+```
+
+Since 0.26.0 · Experimental
+
+The durable task lifecycle and terminal outcome. A completed task can still have `result.isError: true` when the tool returned an error result.
+
+### `ToolActivityResult`
+
+```ts
+interface ToolActivityResult {
+    readonly isError: boolean;
+    readonly structuredOutput?: unknown;
+    readonly details?: unknown;
+    readonly diagnostics?: readonly unknown[];
+    readonly usage?: Usage;
+    readonly durationMs?: number;
+}
+```
+
+Since 0.26.0 · Experimental
+
+The retained nested result. It can be absent when neither the live task nor inspection capture retains it, including for historic nested calls.
+
+- `usage` is the tool execution usage stored by Durable. It is metadata for this call and does not add a second bill to usage history.
+- `details` and `diagnostics` are safe metadata. Image data is omitted.
 
 ### `WebSubagent`
 
@@ -326,6 +398,150 @@ interface WebSubagent {
 Since 0.26.0 · Experimental
 
 One subagent of a session: its name, its own conversation (open it with the app's normal navigation), whether it is busy or waits for an approval or a provider's limit, whether it failed or was stopped, the message it was given and when, when it answered, why it failed, and whether its answer is on its way to the session.
+
+### `ModelContextOptions`
+
+```ts
+interface ModelContextOptions {
+    at?: number;
+    full?: boolean;
+}
+```
+
+Since 0.26.0 · Experimental
+
+- `at`: a positive visible entry id. Omission reads the current tail. An invisible entry answers 404, including a parent entry after a fork point.
+- `full`: true keeps all text. The default clips long text as transcript pages do. Token estimates still count the complete messages.
+
+### `ModelContextSnapshot`
+
+```ts
+interface ModelContextSnapshot {
+    readonly messages: readonly TranscriptMessage[];
+    readonly messageOrigins: readonly ModelMessageOrigin[];
+    readonly entries: readonly TranscriptEntry[];
+    readonly head?: TranscriptEntry;
+    readonly accuracy: {
+        readonly context: "native-durable";
+        readonly tokens: "estimate";
+        readonly toolSources: "current-registry";
+        readonly request: "before-beforeRequest-hooks";
+        readonly imageBytes: "omitted";
+    };
+}
+```
+
+Since 0.26.0 · Experimental
+
+- `messages`: the projected output of native `Conversation.context()`. Durable applies context edits, excludes failed/aborted/deferred answers, moves tool results into call order, and synthesizes missing results.
+- `messageOrigins`: one origin for each normalized message, in the same order.
+- `entries`: native active entries, including the selected head marker. Their messages are stored contributions, before edits and normalization.
+- `head`: the selected native head marker when present.
+- `accuracy`: native committed context before `beforeRequest` hooks and provider adaptation. Tokens are estimates. Tool attribution uses the current registry. Image bytes are absent.
+
+Any route can call `modelContextOf(conversation, options)`. A bound route can call `modelContext(options)`. Both check current visibility before and after asynchronous reads. Capabilities expire when their request ends.
+
+### `ModelMessageOrigin`
+
+```ts
+type ModelMessageOrigin =
+    | { entryId: number; messageIndex: number; editIndex?: number; targetEntryId?: number }
+    | { synthetic: true };
+```
+
+Since 0.26.0 · Experimental
+
+- `entryId`: the source entry containing the exact stored message.
+- `messageIndex`: the index in `entry.messages`, or the replacement messages when `editIndex` is present.
+- `editIndex` and `targetEntryId`: the source entry's replacement edit and the entry whose contribution it replaces.
+- `synthetic`: true for a missing result Durable made. It has no stored image locator.
+
+The source of a winning edit can be an older head marker that native active entries omit. Read that entry from the transcript when needed. To retrieve an image, call `imageOf(conversation, origin.entryId, part.imageIndex, {messageIndex: origin.messageIndex, editIndex: origin.editIndex})`. The optional fourth argument defaults to the first original message for existing callers.
+
+### `WebRelationship`
+
+```ts
+interface WebRelationship {
+    readonly conversationId: number;
+    readonly sessionId: number;
+    readonly parentId?: number;
+    readonly linkedFrom?: number;
+    readonly forkedFrom?: { readonly id: number; readonly entryId?: number };
+}
+```
+
+Since 0.26.0 · Experimental
+
+`relationships()` returns every known conversation under the person's visible sessions, including archived sessions and all subagents. It checks visibility on each call. Hidden origins are omitted. `parentId` identifies a direct subagent parent; `sessionId` identifies its root session. Links and forks confer no access. `subagentsOf(conversation)` reads every direct subagent of any visible conversation, without the board's 24-finished cap.
+
+### `UsageHistory`
+
+```ts
+interface UsageHistory {
+    readonly totals?: UsageState;
+    readonly events: readonly UsageHistoryEvent[];
+    readonly known: UsageState;
+    readonly undated: UsageState;
+    readonly accuracy: {
+        readonly historical: "stored-entry-usage";
+        readonly remainder: "undated";
+        readonly capture: "enabled-only-best-effort";
+    };
+}
+```
+
+Since 0.26.0 · Experimental
+
+`usageHistoryOf(conversation)` returns the conversation's own authoritative `pi.usage` totals, known entry and captured usage events, their sum, and the explicit remainder. Inherited fork entries contribute no own bills. Captured commit events replace the entry bills in the same commit to prevent double counting.
+
+`pi.usage` retains only its latest value. Old compaction, warm, or missing bills cannot be assigned exact dates. They stay in `undated`. The counters in `known + undated` equal `totals`. An inconsistent imported history can produce a signed remainder; a negative remainder is a reconciliation discrepancy, never a dated credit.
+
+While Context Insight is enabled, core observes usage commits and persists their timestamped deltas. This includes model failures, compaction, tool usage, and cache warms that change `pi.usage`. Persistence occurs after the source commit and can miss the last update on an abrupt process exit. Such a missing bill stays in the remainder. No event is reconstructed from a current total and assigned an old day.
+
+### `UsageHistoryEvent`
+
+```ts
+interface UsageHistoryEvent {
+    readonly at?: number;
+    readonly entryId?: number;
+    readonly bucket: "models" | "tools";
+    readonly key: string;
+    readonly usage: Usage;
+    readonly source: "entry" | "usage-commit";
+}
+```
+
+Since 0.26.0 · Experimental
+
+- `at`: the stored message timestamp, or the time core observed the usage commit. It is absent when the source has no timestamp.
+- `entryId`: the stored bill's entry when available. Compaction and warm usage need not have entries.
+- `bucket` and `key`: the authoritative usage bucket and its provider/model or tool key.
+- `usage`: stored bill counters and costs.
+- `source`: stored entry usage or a captured usage delta. A captured delta dates the commit, not the provider's billing clock.
+
+### `ModelRequestCapture`
+
+```ts
+interface ModelRequestCapture {
+    readonly id: string;
+    readonly startedAt: number;
+    readonly endedAt?: number;
+    readonly provider: string;
+    readonly model: string;
+    readonly messages: readonly TranscriptMessage[];
+    readonly response?: TranscriptMessage;
+    readonly outcome: "pending" | "done" | "error";
+    readonly accuracy: "normalized-after-hooks";
+}
+```
+
+Since 0.26.0 · Experimental
+
+`requestHistoryOf(conversation)` returns persisted normalized request captures. Core captures only while Context Insight is enabled. It captures stream attempts below the retry gate and cache keeper, including compaction and warm requests. These are normalized messages after request hooks, before provider adaptation and payload shapers. They are not provider-wire JSON.
+
+A pending record is queued independently of the model request. Neither the initial diagnostic write nor its terminal update blocks provider startup, response delivery, or tool execution. Capture failures are diagnostic only. The terminal record includes the provider-reported response usage and measured timing. Request credentials, options, and headers are never captured. Image bytes are omitted. Explicitly hidden values are replaced. A disabled module stores no new records. Records already stored remain readable through authorized core APIs. Capture writes do not add model-visible entries.
+
+A request interrupted before its terminal capture remains pending. Captured provider usage is evidence of the response, while `usageHistoryOf` reconciles actual committed billing. Neither claims that pending work cost zero.
 
 ### `TranscriptOptions`
 
@@ -364,6 +580,7 @@ Since 0.26.0 · Experimental
 ```ts
 interface TranscriptEntry {
     readonly id: number;
+    readonly conversationId?: number;
     readonly kind: string;
     readonly at?: number;
     readonly head?: number;
@@ -401,7 +618,7 @@ type TranscriptMessage =
 
 Since 0.26.0 · Experimental
 
-A message as the transcript stores it, with the image bytes left out. `tokens` is Pi's meter's figure for the whole message, which is what the context ring counts. A system message carries the sections it set (`null` removes one), the tools it added, and the names of the tools it removed. An assistant message carries its provider, model, `usage`, `stopReason`, `error`, and `durationMs`.
+A message as the transcript stores it, with the image bytes left out. All roles retain stored `timestamp` and its `at` alias. Users retain `source`; assistants retain `pocketTiming`; tool results retain `details`, `nestedCalls`, `usage`, and `durationMs`. Missing metadata remains absent. `tokens` is Pi's meter's figure for the whole message, which is what the context ring counts. A system message carries the sections it set (`null` removes one), the tools it added, and the names of the tools it removed. An assistant message carries its provider, model, `usage`, `stopReason`, `error`, and `durationMs`.
 
 ### `TranscriptPart`
 
@@ -415,7 +632,7 @@ type TranscriptPart =
 
 Since 0.26.0 · Experimental
 
-A part of a message with its own price in tokens. `clipped` is the text's whole length when `full` was not asked for.
+A part of a message with its own price in tokens. `clipped` is the text's whole length when `full` was not asked for. Images include their zero-based `imageIndex` within the source message. They retain stored `width`, `height`, and `byteSize` when present. Base64 data can supply the byte size when it was not stored separately. Image bytes never appear in a transcript or model context response.
 
 ### `TranscriptTool`
 
@@ -431,7 +648,7 @@ interface TranscriptTool {
 
 Since 0.26.0 · Experimental
 
-A tool as a system message defines it, with the tokens its definition costs in the request. `source` is the extension that registered a tool of that name, as the registry knows it now; it is left out for a tool the registry does not list.
+A tool as a system message defines it, with the tokens its definition costs in the request. `sourceProvenance: "current-registry"` labels attribution explicitly. `source` is the extension that registered a tool of that name, as the registry knows it now; it is left out for a tool the registry does not list.
 
 ### `HumanLinkedSessions`
 

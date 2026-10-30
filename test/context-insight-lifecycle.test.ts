@@ -87,6 +87,23 @@ function request(transcript: ConversationWebRequest["transcript"]): Conversation
         usageOf: async () => undefined,
         imageOf: async () => undefined,
         subagents: () => [],
+        modelContext: async () => ({ messages: [], messageOrigins: [], entries: [], accuracy: {} }),
+        modelContextOf: async () => ({
+            messages: [],
+            messageOrigins: [],
+            entries: [],
+            accuracy: {},
+        }),
+        usageHistoryOf: async () => ({
+            events: [],
+            known: { models: {}, tools: {} },
+            undated: { models: {}, tools: {} },
+        }),
+        requestHistoryOf: async () => [],
+        toolActivity: async () => [],
+        toolActivityOf: async () => [],
+        relationships: () => [],
+        subagentsOf: () => [],
     } as unknown as ConversationWebRequest;
 }
 
@@ -156,8 +173,10 @@ test("module cleanup runs every host.on disposer", (t) => {
     t.after(module.dispose);
     assert.deepEqual(module.listeners.map((listener) => listener.event).sort(), [
         "message.sent",
+        "request.completed",
         "run.ended",
         "run.started",
+        "usage.updated",
     ]);
     assert.ok(module.listeners.every((listener) => listener.disposed === 0));
     module.dispose();

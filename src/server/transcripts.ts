@@ -3,7 +3,7 @@
  * in them, what came before the active context, and the whole session as Markdown.
  */
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Message, Usage } from "@earendil-works/pi-ai";
+import { contentText, type Message, type Usage } from "@earendil-works/pi-ai";
 import { estimateMessageTokens, estimateTextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import {
     type ContextEdit,
@@ -20,6 +20,9 @@ import type { User } from "./config.ts";
 import { AuthorsDoc } from "./docs.ts";
 import { transcriptMarkdown } from "./export.ts";
 import type {
+    ModelContextOptions,
+    ModelContextSnapshot,
+    ModelMessageOrigin,
     TranscriptEdit,
     TranscriptEntry,
     TranscriptMessage,
@@ -29,7 +32,9 @@ import type {
     TranscriptTool,
 } from "./host.ts";
 import { homePath } from "./paths.ts";
+import { HttpError } from "./errors.ts";
 import { type ClientEntry, projectEntry } from "./projection.ts";
+import { ToolActivity, type ToolActivityRow } from "./tool-activity.ts";
 
 const context = BACKGROUND_CONTEXT;
 /** Tokens Pi's meter counts for one image: its fixed size in characters, divided as text is. */
@@ -39,9 +44,11 @@ const TEXT_LIMIT = 8000;
 
 export class Transcripts {
     readonly #app: PocketApp;
+    readonly #toolActivity: ToolActivity;
 
     constructor(app: PocketApp) {
         this.#app = app;
+        this.#toolActivity = new ToolActivity(app);
     }
 
     /** An image part of a stored message: a pasted image, or an image a tool returned. */
@@ -49,6 +56,7 @@ export class Transcripts {
         id: ConversationId,
         entryId: number,
         index: number,
+        location?: { messageIndex?: number; editIndex?: number },
     ): Promise<{ mimeType: string; data: Buffer } | undefined> {
         if (!Number.isInteger(entryId) || !Number.isInteger(index) || index < 0) {
             return undefined;
@@ -60,7 +68,17 @@ export class Transcripts {
             return undefined;
         }
 
-        const content = (entry.model?.[0] as { content?: unknown } | undefined)?.content;
+        const replacement =
+            location?.editIndex === undefined ? undefined : entry.edits?.[location.editIndex];
+        const messages =
+            replacement?.action === "replace"
+                ? replacement.messages
+                : location?.editIndex === undefined
+                  ? entry.model
+                  : undefined;
+        const content = (
+            messages?.[location?.messageIndex ?? 0] as { content?: unknown } | undefined
+        )?.content;
 
         if (!Array.isArray(content)) {
             return undefined;
@@ -212,7 +230,122 @@ export class Transcripts {
         };
     }
 
-    /** A conversation's token and cost totals, from Pi Durable's `pi.usage`. */
+    /** Native Durable context: edits, stop filtering, ordering, and missing results stay native. */
+    async modelContext(
+        id: ConversationId,
+        options: ModelContextOptions = {},
+    ): Promise<ModelContextSnapshot> {
+        const conversation = await this.#app.conversation(id);
+
+        if (options.at !== undefined && (await this.visibleEntry(id, options.at)) === undefined) {
+            throw new HttpError(404, "That entry is not visible from this conversation.");
+        }
+
+        const view = await conversation.context(
+            context,
+            options.at === undefined ? {} : { at: options.at as EntryId },
+        );
+        const sources = this.#app.toolSources();
+        const origins = new Map<Message, ModelMessageOrigin>();
+        const entries = [...view.entries];
+        // Older head markers can carry winning edits even though native active entries omit those markers.
+        const tail = entries.reduce((latest, entry) => Math.max(latest, Number(entry.id)), 0);
+        const edits = new Map<
+            number,
+            { entry: EntryRecord; index: number; messages: readonly Message[] }
+        >();
+        let cursor: Cursor | undefined;
+
+        if (tail > 0) {
+            do {
+                const page = await conversation.entries(
+                    {
+                        maxEntryId: tail as EntryId,
+                        ...(view.head === undefined ? {} : { minEntryId: view.head.head }),
+                        order: "ascending",
+                    },
+                    256,
+                    cursor,
+                    context,
+                );
+
+                for (const entry of page.items) {
+                    for (const [index, edit] of (entry.edits ?? []).entries()) {
+                        if (edit.action === "replace") {
+                            edits.set(Number(edit.target), {
+                                entry,
+                                index,
+                                messages: edit.messages,
+                            });
+                        } else {
+                            edits.delete(Number(edit.target));
+                        }
+                    }
+                }
+
+                cursor = page.next;
+            } while (cursor !== undefined);
+        }
+
+        for (const [index, entry] of entries.entries()) {
+            const replacement = edits.get(Number(entry.id));
+            const messages = replacement?.messages ?? entry.model ?? [];
+            let from = 0;
+
+            for (const message of view.contributions[index] ?? []) {
+                const messageIndex = messages.findIndex(
+                    (candidate, at) =>
+                        at >= from && (candidate === message || json(candidate) === json(message)),
+                );
+
+                if (messageIndex < 0) {
+                    continue;
+                }
+
+                from = messageIndex + 1;
+                origins.set(
+                    message,
+                    replacement === undefined
+                        ? { entryId: Number(entry.id), messageIndex }
+                        : {
+                              entryId: Number(replacement.entry.id),
+                              messageIndex,
+                              editIndex: replacement.index,
+                              targetEntryId: Number(entry.id),
+                          },
+                );
+            }
+        }
+
+        return {
+            messages: view.messages.map((message) =>
+                transcriptMessage(message, options.full === true, sources),
+            ),
+            messageOrigins: view.messages.map(
+                (message) => origins.get(message) ?? { synthetic: true },
+            ),
+            entries: entries.map((entry) => transcriptEntry(entry, options.full === true, sources)),
+            ...(view.head === undefined
+                ? {}
+                : { head: transcriptEntry(view.head, options.full === true, sources) }),
+            accuracy: {
+                context: "native-durable",
+                tokens: "estimate",
+                toolSources: "current-registry",
+                request: "before-beforeRequest-hooks",
+                imageBytes: "omitted",
+            },
+        };
+    }
+
+    /** Stored nested tool calls and any result still retained by the parent task. */
+    async toolActivity(id: ConversationId): Promise<readonly ToolActivityRow[]> {
+        await this.#app.inspection.flush();
+
+        return this.#toolActivity.read(id);
+    }
+
+    /** A conversation's token and cost totals, from Pi Durable's pi.usage. */
     async usage(id: ConversationId): Promise<UsageState | undefined> {
         return this.#app.harness.snapshot(UsageDoc, id, context);
     }
@@ -253,6 +386,23 @@ export class Transcripts {
 
         return { filename: `${slug}.md`, markdown };
     }
+}
+
+/** Metadata keeps its structure, but image objects never expose their bytes. */
+export function safeMetadata(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(safeMetadata);
+    }
+
+    if (isRecord(value)) {
+        return Object.fromEntries(
+            Object.entries(value)
+                .filter(([key]) => !(value.type === "image" && key === "data"))
+                .map(([key, item]) => [key, safeMetadata(item)]),
+        );
+    }
+
+    return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -303,14 +453,23 @@ function callPart(block: Record<string, unknown>): TranscriptPart {
         type: "toolCall",
         id: String(block.id ?? ""),
         name,
-        arguments: args,
+        arguments: safeMetadata(args),
         tokens: estimateTextTokens(name + json(args)),
     };
 }
 
-function imagePart(block: Record<string, unknown>): TranscriptPart {
+function imagePart(block: Record<string, unknown>, imageIndex: number): TranscriptPart {
     return {
         type: "image",
+        imageIndex,
+        ...Object.fromEntries(
+            ["width", "height", "byteSize"]
+                .filter((key) => typeof block[key] === "number")
+                .map((key) => [key, block[key]]),
+        ),
+        ...(typeof block.byteSize === "number" || typeof block.data !== "string"
+            ? {}
+            : { byteSize: Buffer.byteLength(block.data, "base64") }),
         ...(typeof block.mimeType === "string" ? { mimeType: block.mimeType } : {}),
         tokens: IMAGE_TOKENS,
     };
@@ -318,6 +477,8 @@ function imagePart(block: Record<string, unknown>): TranscriptPart {
 
 /** The parts of a user message or a tool result: its text and images, without the image bytes. */
 function contentParts(content: unknown, full: boolean): TranscriptPart[] {
+    let imageIndex = 0;
+
     if (typeof content === "string") {
         return [textPart(content, full)];
     }
@@ -335,7 +496,7 @@ function contentParts(content: unknown, full: boolean): TranscriptPart[] {
             return [textPart(String(value.text ?? ""), full)];
         }
 
-        return value.type === "image" ? [imagePart(value)] : [];
+        return value.type === "image" ? [imagePart(value, imageIndex++)] : [];
     });
 }
 
@@ -371,20 +532,24 @@ function toolOf(value: unknown, sources: Record<string, string>): TranscriptTool
     return {
         name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        ...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
+        ...(tool.parameters === undefined ? {} : { parameters: safeMetadata(tool.parameters) }),
         tokens: estimateTextTokens(json(tool)),
-        ...(source === undefined ? {} : { source }),
+        ...(source === undefined ? {} : { source, sourceProvenance: "current-registry" as const }),
     };
 }
 
 /** One stored message, priced by Pi's meter, with the image bytes left out. */
-function transcriptMessage(
+export function transcriptMessage(
     value: unknown,
     full: boolean,
     sources: Record<string, string>,
 ): TranscriptMessage {
     const message = isRecord(value) ? value : {};
     const role = message.role;
+    const metadata =
+        typeof message.timestamp === "number"
+            ? { timestamp: message.timestamp, at: message.timestamp }
+            : {};
 
     const tokens = () => {
         try {
@@ -401,7 +566,8 @@ function transcriptMessage(
 
         return {
             role: "system",
-            content: String(message.content ?? ""),
+            ...metadata,
+            content: systemText(message),
             tokens: tokens(),
             ...(sections === undefined
                 ? {}
@@ -418,12 +584,25 @@ function transcriptMessage(
     }
 
     if (role === "user") {
-        return { role: "user", parts: contentParts(message.content, full), tokens: tokens() };
+        return {
+            role: "user",
+            ...metadata,
+            ...(message.source === undefined ? {} : { source: safeMetadata(message.source) }),
+            parts: contentParts(message.content, full),
+            tokens: tokens(),
+        };
     }
 
     if (role === "toolResult") {
         return {
             role: "toolResult",
+            ...metadata,
+            ...(message.details === undefined ? {} : { details: safeMetadata(message.details) }),
+            ...(message.nestedCalls === undefined
+                ? {}
+                : { nestedCalls: safeMetadata(message.nestedCalls) }),
+            ...(isRecord(message.usage) ? { usage: message.usage as unknown as Usage } : {}),
+            ...(typeof message.durationMs === "number" ? { durationMs: message.durationMs } : {}),
             callId: String(message.toolCallId ?? ""),
             name: String(message.toolName ?? "?"),
             parts: contentParts(message.content, full),
@@ -434,6 +613,16 @@ function transcriptMessage(
 
     return {
         role: "assistant",
+        ...metadata,
+        ...(isRecord(message.pocketTiming)
+            ? {
+                  pocketTiming: message.pocketTiming as {
+                      startedAt: number;
+                      endedAt: number;
+                      firstTokenAt?: number;
+                  },
+              }
+            : {}),
         parts: answerParts(message.content, full),
         tokens: tokens(),
         ...(typeof message.provider === "string" ? { provider: message.provider } : {}),
@@ -445,7 +634,14 @@ function transcriptMessage(
     };
 }
 
-/** One stored entry as a page of the transcript gives it. */
+function systemText(message: Record<string, unknown>): string {
+    try {
+        return contentText((message.content ?? "") as Parameters<typeof contentText>[0]);
+    } catch {
+        return typeof message.content === "string" ? message.content : "";
+    }
+}
+
 function transcriptEntry(
     entry: EntryRecord,
     full: boolean,
@@ -459,10 +655,11 @@ function transcriptEntry(
 
     return {
         id: Number(entry.id),
+        conversationId: Number(entry.conversationId),
         kind: entry.kind,
         ...(at === undefined ? {} : { at }),
         ...(entry.head === undefined ? {} : { head: Number(entry.head) }),
-        ...(entry.data === undefined ? {} : { data: entry.data }),
+        ...(entry.data === undefined ? {} : { data: safeMetadata(entry.data) }),
         ...(entry.edits === undefined || entry.edits.length === 0
             ? {}
             : { edits: entry.edits.map((edit) => transcriptEdit(edit, full, sources)) }),

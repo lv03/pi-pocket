@@ -32,6 +32,10 @@ export interface AppEvents {
     /** Pi started to work in a conversation: a session's or a subagent's (`session` is its session). */
     "run.started": { conversationId: number; session: number };
     "run.ended": { conversationId: number; session: number };
+    /** A normalized captured request reached a terminal response. @since 0.26.0 @experimental */
+    "request.completed": { conversationId: number; session: number; at: number; requestId: string };
+    /** Authoritative own usage changed in a core commit. @since 0.26.0 @experimental */
+    "usage.updated": { conversationId: number; session: number; at: number };
 }
 
 export type AppEventName = keyof AppEvents;
@@ -43,6 +47,8 @@ export const APP_EVENTS: readonly AppEventName[] = [
     "message.sent",
     "run.started",
     "run.ended",
+    "request.completed",
+    "usage.updated",
 ];
 
 type Listener = (data: never) => unknown;

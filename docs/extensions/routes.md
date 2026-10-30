@@ -65,6 +65,8 @@ web.conversationRoute(
 
 `request.linkedSessions.start(request, key)` and `list()` act as the signed-in clicking person and bound source, not whoever last wrote to Pi there. There is no actor override. Starts check current plan, turn, spend, team and model policy; they reject a source folder/model/thinking change while they wait. Explicit thinking is never silently lowered. Give each logical role start a stable, module-namespaced key; another person cannot replay its receipt. The route waits for starts, not model answers. See [Starting and messaging sessions](linked-sessions.md#starts-from-a-human-page) and the [request reference](reference/web.md#conversationwebrequest).
 
+A bound route can call `request.toolActivity()` for stored nested tool calls in its source conversation. An ordinary route can call `request.toolActivityOf(id)` after checking an id; both methods recheck current visibility before and after the asynchronous Durable read. Results can omit historic nested output because `NestedCallDoc` retires with its parent task.
+
 Use an ordinary owner-only `web.route` for an app-wide catalog save. Its document commit has no source plan, turn, or spend checks.
 
 ## Errors

@@ -335,6 +335,10 @@ export interface AppEvents {
      * @experimental
      */
     "run.ended": { conversationId: number; session: number };
+    /** A normalized captured request reached a terminal response. @since 0.26.0 @experimental */
+    "request.completed": { conversationId: number; session: number; at: number; requestId: string };
+    /** Authoritative own usage changed in a core commit. @since 0.26.0 @experimental */
+    "usage.updated": { conversationId: number; session: number; at: number };
 }
 
 /**
@@ -907,6 +911,52 @@ export type WebAccess = "owner" | "steer" | "view";
 export type WebMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
+ * The durable lifecycle or tool outcome of one nested call.
+ * @since 0.26.0
+ * @experimental
+ */
+export type ToolActivityStatus =
+    "pending" | "running" | "completed" | "failed" | "aborted" | "orphaned" | "faulted";
+
+/**
+ * The stored result of a nested call, when its parent task still retains it.
+ * @since 0.26.0
+ * @experimental
+ */
+export interface ToolActivityResult {
+    readonly isError: boolean;
+    /** Structured output only. It is not a complete text rendering of the tool output. */
+    readonly structuredOutput?: unknown;
+    readonly details?: unknown;
+    readonly diagnostics?: readonly unknown[];
+    readonly usage?: Usage;
+    readonly durationMs?: number;
+}
+
+/**
+ * A stored nested tool call in one visible conversation.
+ * @since 0.26.0
+ * @experimental
+ */
+export interface ToolActivityRow {
+    readonly taskId: number;
+    readonly parentTaskId: number;
+    readonly callId: string;
+    readonly parentCallId: string;
+    readonly rootCallId?: string;
+    readonly toolName: string;
+    readonly arguments: unknown;
+    readonly status: ToolActivityStatus;
+    readonly startedAt?: number;
+    readonly endedAt?: number;
+    readonly durationMs?: number;
+    readonly result?: ToolActivityResult;
+    /** True only for a stored structured output value, never for complete text output. */
+    readonly outputRecorded: boolean;
+    readonly resultAvailable: boolean;
+}
+
+/**
  * A request to a route, as its handler gets it.
  * @since 0.14.0
  */
@@ -970,6 +1020,22 @@ export interface WebRequest {
      * @experimental
      */
     transcriptOf(conversation: number, options?: TranscriptOptions): Promise<TranscriptPage>;
+    /** Native committed context of a visible conversation. @since 0.26.0 @experimental */
+    modelContextOf(
+        conversation: number,
+        options?: ModelContextOptions,
+    ): Promise<ModelContextSnapshot>;
+    /** Every direct subagent, without the board's finished cap. @since 0.26.0 @experimental */
+    subagentsOf(conversation: number): readonly WebSubagent[];
+    /** All currently visible conversation relationships. @since 0.26.0 @experimental */
+    relationships(): readonly WebRelationship[];
+    /** Known own usage plus the undated remainder. @since 0.26.0 @experimental */
+    usageHistoryOf(conversation: number): Promise<UsageHistory>;
+    /** Nested tool calls stored for this conversation, with retained result metadata when available. @since 0.26.0 @experimental */
+    toolActivityOf(conversation: number): Promise<readonly ToolActivityRow[]>;
+    /** Captured requests while Context Insight was enabled. @since 0.26.0 @experimental */
+    requestHistoryOf(conversation: number): Promise<readonly ModelRequestCapture[]>;
+
     /**
      * Any conversation's `pi.usage` totals that the person who asked may see. Undefined before the first response.
      *
@@ -988,6 +1054,7 @@ export interface WebRequest {
         conversation: number,
         entry: number,
         index: number,
+        location?: { readonly messageIndex?: number; readonly editIndex?: number },
     ): Promise<{ readonly mimeType: string; readonly data: string } | undefined>;
 }
 
@@ -1036,6 +1103,84 @@ export interface WebSession {
  * @since 0.26.0
  * @experimental
  */
+/** Native committed model context, before request hooks or provider adaptation. @since 0.26.0 @experimental */
+export interface ModelContextOptions {
+    /** A visible entry id. Omission reads the current tail. */
+    at?: number;
+    full?: boolean;
+}
+
+/** Exact stored locator for a normalized message, or a result synthesized by Durable. @since 0.26.0 @experimental */
+export type ModelMessageOrigin =
+    | {
+          readonly entryId: number;
+          readonly messageIndex: number;
+          readonly editIndex?: number;
+          readonly targetEntryId?: number;
+      }
+    | { readonly synthetic: true };
+
+/** Native Durable normalization, with projected messages and their stored origins. @since 0.26.0 @experimental */
+export interface ModelContextSnapshot {
+    readonly messages: readonly TranscriptMessage[];
+    readonly messageOrigins: readonly ModelMessageOrigin[];
+    readonly entries: readonly TranscriptEntry[];
+    readonly head?: TranscriptEntry;
+    readonly accuracy: {
+        readonly context: "native-durable";
+        readonly tokens: "estimate";
+        readonly toolSources: "current-registry";
+        readonly request: "before-beforeRequest-hooks";
+        readonly imageBytes: "omitted";
+    };
+}
+
+/** Visible conversation relationships. Links confer no access. @since 0.26.0 @experimental */
+export interface WebRelationship {
+    readonly conversationId: number;
+    readonly sessionId: number;
+    readonly parentId?: number;
+    readonly linkedFrom?: number;
+    readonly forkedFrom?: { readonly id: number; readonly entryId?: number };
+}
+
+/** A known own bill, dated only when its source records a time. @since 0.26.0 @experimental */
+export interface UsageHistoryEvent {
+    readonly at?: number;
+    readonly entryId?: number;
+    readonly bucket: "models" | "tools";
+    readonly key: string;
+    readonly usage: Usage;
+    readonly source: "entry" | "usage-commit";
+}
+
+/** Own billed totals, known events, and an explicit undated remainder. @since 0.26.0 @experimental */
+export interface UsageHistory {
+    readonly totals?: UsageState;
+    readonly events: readonly UsageHistoryEvent[];
+    readonly known: UsageState;
+    readonly undated: UsageState;
+    readonly accuracy: {
+        readonly historical: "stored-entry-usage";
+        readonly remainder: "undated";
+        readonly capture: "enabled-only-best-effort";
+    };
+}
+
+/** Normalized request capture after hooks; never provider-wire JSON. @since 0.26.0 @experimental */
+export interface ModelRequestCapture {
+    readonly id: string;
+    readonly startedAt: number;
+    readonly endedAt?: number;
+    readonly provider: string;
+    readonly model: string;
+    readonly messages: readonly TranscriptMessage[];
+    readonly response?: TranscriptMessage;
+    readonly outcome: "pending" | "done" | "error";
+    readonly accuracy: "normalized-after-hooks";
+}
+
+/** Stored transcript paging and clipping. @since 0.26.0 @experimental */
 export interface TranscriptOptions {
     /** Entries newer than this id, oldest first. Absent or 0 starts at the beginning. */
     after?: number;
@@ -1070,6 +1215,8 @@ export interface TranscriptPage {
  */
 export interface TranscriptEntry {
     readonly id: number;
+    /** Conversation that owns this entry; inherited fork entries keep their original owner. */
+    readonly conversationId?: number;
     /** The stored kind, such as `pi.user`, `pi.assistant`, `pi.compaction`, or a kind of Pi Pocket's own. */
     readonly kind: string;
     /** When its first message was made, in milliseconds since 1970 on the server's clock, when the message says. */
@@ -1103,7 +1250,7 @@ export type TranscriptEdit =
  * @since 0.26.0
  * @experimental
  */
-export type TranscriptMessage =
+export type TranscriptMessage = { readonly timestamp?: number; readonly at?: number } & (
     | {
           readonly role: "system";
           readonly content: string;
@@ -1115,6 +1262,7 @@ export type TranscriptMessage =
       }
     | {
           readonly role: "user";
+          readonly source?: unknown;
           readonly parts: readonly TranscriptPart[];
           readonly tokens: number;
       }
@@ -1129,6 +1277,11 @@ export type TranscriptMessage =
           readonly stopReason?: string;
           readonly error?: string;
           readonly durationMs?: number;
+          readonly pocketTiming?: {
+              readonly startedAt: number;
+              readonly endedAt: number;
+              readonly firstTokenAt?: number;
+          };
       }
     | {
           readonly role: "toolResult";
@@ -1137,7 +1290,12 @@ export type TranscriptMessage =
           readonly parts: readonly TranscriptPart[];
           readonly tokens: number;
           readonly isError: boolean;
-      };
+          readonly details?: unknown;
+          readonly nestedCalls?: unknown;
+          readonly usage?: Usage;
+          readonly durationMs?: number;
+      }
+);
 
 /**
  * A part of a message, with the tokens that Pi's meter counts for it.
@@ -1166,7 +1324,15 @@ export type TranscriptPart =
           readonly arguments: unknown;
           readonly tokens: number;
       }
-    | { readonly type: "image"; readonly mimeType?: string; readonly tokens: number };
+    | {
+          readonly type: "image";
+          readonly mimeType?: string;
+          readonly tokens: number;
+          readonly imageIndex?: number;
+          readonly width?: number;
+          readonly height?: number;
+          readonly byteSize?: number;
+      };
 
 /**
  * A tool as a system message defines it, with the tokens its definition costs in the request.
@@ -1181,6 +1347,8 @@ export interface TranscriptTool {
     readonly tokens: number;
     /** The extension that registered it, when the registry knows one. */
     readonly source?: string;
+    /** Historical attribution uses the registry now. */
+    readonly sourceProvenance?: "current-registry";
 }
 
 /**
@@ -1211,6 +1379,8 @@ export interface WebSubagent {
  * @since 0.16.0
  */
 export interface ConversationWebRequest extends WebRequest {
+    /** Stored nested tool calls for this conversation. @since 0.26.0 @experimental */
+    toolActivity(): Promise<readonly ToolActivityRow[]>;
     /**
      * Authoritative source settings for this request; omitted model means none is selected.
      * @since 0.16.0
@@ -1234,6 +1404,8 @@ export interface ConversationWebRequest extends WebRequest {
      * @since 0.26.0
      * @experimental
      */
+    /** Native committed context of this conversation. @since 0.26.0 @experimental */
+    modelContext(options?: ModelContextOptions): Promise<ModelContextSnapshot>;
     transcript(options?: TranscriptOptions): Promise<TranscriptPage>;
     /**
      * This conversation's token and cost totals, from Pi Durable's `pi.usage`. Undefined before the first response.

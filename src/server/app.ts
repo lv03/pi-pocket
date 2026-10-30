@@ -133,6 +133,7 @@ import {
 } from "./skills.ts";
 import { Spend } from "./spend.ts";
 import { Transcripts } from "./transcripts.ts";
+import { ContextInspection } from "./context-inspection.ts";
 import { Watches } from "./watches.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -317,6 +318,7 @@ export class PocketApp {
     readonly workspace = new Workspace(this);
     /** The conversation's stored history, as people read it. */
     readonly transcripts = new Transcripts(this);
+    readonly inspection = new ContextInspection(this);
     /** Pi's sessions from the terminal, which the owner can continue here. */
     readonly piSessions = new PiSessions(this);
     /** PiP, the owner's assistant: its conversation, what its tools do, and the follows that report to it. */
@@ -718,6 +720,7 @@ export class PocketApp {
         this.providers.modelRefresh.watch(this.models);
         this.#configureModels?.(this.models);
         measureModelStreams(this.models);
+        this.inspection.install(this.models, (sessionId) => this.#conversationOfSession(sessionId));
         // Outside the timing wrapper: each attempt is timed on its own, not the wait before it.
         this.limits.install(this.models);
         // Outermost: it sees each real request finish, and replays it through the wrappers below.
@@ -883,6 +886,7 @@ export class PocketApp {
         const conversations = await this.#recover(storage);
 
         await this.spend.load(conversations);
+        await this.inspection.load(conversations);
 
         this.#unsubscribeCommits = this.harness.subscribeCommits((publication) =>
             this.#committed(publication),
@@ -1065,6 +1069,8 @@ export class PocketApp {
                 }
             }
         }
+
+        this.inspection.committed(publication);
 
         if (sessionsChanged) {
             this.#scheduleSessions();
@@ -2066,10 +2072,6 @@ export class PocketApp {
         return sessions;
     }
 
-    /**
-     * Every subagent in the sessions this person can see, for the subagents board, but a session's oldest finished ones
-     * past `BOARD_FINISHED`. Archived sessions are left out, unless one of their subagents works or waits there.
-     */
     /** Every tool's extension, by tool name, from the registry now. */
     toolSources(): Record<string, string> {
         const sources: Record<string, string> = {};
@@ -2081,11 +2083,14 @@ export class PocketApp {
         return sources;
     }
 
-    /** One session's subagents, as its Fleet view gets them. */
+    /** Every direct subagent, including all finished agents. Board limits apply only in subagents(). */
     subagentsOf(id: ConversationId): SubagentEntry[] {
-        return forBoard(this.#subagentsBySession().get(String(id)) ?? []);
+        return (this.#subagentsBySession().get(String(this.rootOf(id))) ?? []).filter(
+            (agent) => this.#parents.get(agent.conversationId) === id,
+        );
     }
 
+    /** All visible board agents, with the per-session finished cap and archived-session filter. */
     subagents(user?: User): SubagentEntry[] {
         const all: SubagentEntry[] = [];
 
@@ -3575,6 +3580,7 @@ export class PocketApp {
             try {
                 // Close writes no outcome: running work resumes when the next process opens the storage.
                 if (this.harness !== undefined) {
+                    await this.inspection.flush();
                     await this.harness.close(context);
                 } else {
                     await this.#openingStorage?.close(context);

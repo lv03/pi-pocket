@@ -11,6 +11,8 @@ import { ExtensionRequest } from "../extension-request.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type {
     ConversationWebRequest,
+    ModelContextOptions,
+    WebRelationship,
     TranscriptOptions,
     WebSession,
     WebSubagent,
@@ -118,29 +120,57 @@ export async function extensionRoute(
                       },
                       linkedSessions: app.linkedSessions.forRequest(id, scope),
                   };
+
+        const check = (target: ConversationId): void => {
+            app.requireSee(scope.current(), target);
+        };
+
+        const read = async <T>(target: ConversationId, operation: () => Promise<T>): Promise<T> => {
+            check(target);
+
+            const result = await operation();
+
+            check(target);
+
+            return result;
+        };
+
+        const agents = (target: ConversationId): WebSubagent[] => {
+            check(target);
+
+            return app
+                .subagentsOf(target)
+                .filter((agent) => app.canSee(scope.current(), agent.conversationId))
+                .map((agent) => ({
+                    name: agent.name,
+                    conversationId: Number(agent.conversationId),
+                    busy: agent.busy,
+                    ...(agent.waiting === true ? { waiting: true as const } : {}),
+                    ...(agent.failed === true ? { failed: true as const } : {}),
+                    ...(agent.stopped === true ? { stopped: true as const } : {}),
+                    ...(agent.asked === undefined ? {} : { asked: agent.asked }),
+                    ...(agent.askedAt === undefined ? {} : { askedAt: agent.askedAt }),
+                    ...(agent.answeredAt === undefined ? {} : { answeredAt: agent.answeredAt }),
+                    ...(agent.error === undefined ? {} : { error: agent.error }),
+                    ...(agent.reporting === true ? { reporting: true as const } : {}),
+                }));
+        };
+
         const readings =
             id === undefined
                 ? {}
                 : {
                       transcript: (options?: unknown) =>
-                          app.transcripts.transcript(id, transcriptOptions(options)),
-                      usage: () => app.transcripts.usage(id),
-                      subagents: (): WebSubagent[] =>
-                          app.subagentsOf(id).map((agent) => ({
-                              name: agent.name,
-                              conversationId: Number(agent.conversationId),
-                              busy: agent.busy,
-                              ...(agent.waiting === true ? { waiting: true as const } : {}),
-                              ...(agent.failed === true ? { failed: true as const } : {}),
-                              ...(agent.stopped === true ? { stopped: true as const } : {}),
-                              ...(agent.asked === undefined ? {} : { asked: agent.asked }),
-                              ...(agent.askedAt === undefined ? {} : { askedAt: agent.askedAt }),
-                              ...(agent.answeredAt === undefined
-                                  ? {}
-                                  : { answeredAt: agent.answeredAt }),
-                              ...(agent.error === undefined ? {} : { error: agent.error }),
-                              ...(agent.reporting === true ? { reporting: true as const } : {}),
-                          })),
+                          read(id, () =>
+                              app.transcripts.transcript(id, transcriptOptions(options)),
+                          ),
+                      modelContext: (options?: unknown) =>
+                          read(id, () =>
+                              app.transcripts.modelContext(id, modelContextOptions(options)),
+                          ),
+                      usage: () => read(id, () => app.transcripts.usage(id)),
+                      toolActivity: () => read(id, () => app.transcripts.toolActivity(id)),
+                      subagents: (): WebSubagent[] => agents(id),
                   };
         const input = {
             method: route.method,
@@ -152,21 +182,80 @@ export async function extensionRoute(
             context: scope.context,
             snapshot: scope.snapshot,
             commit: scope.commit,
+            modelContextOf: (conversation: number, options?: unknown) => {
+                const target = conversationIdOf(conversation);
+
+                return read(target, () =>
+                    app.transcripts.modelContext(target, modelContextOptions(options)),
+                );
+            },
+            subagentsOf: (conversation: number) => agents(conversationIdOf(conversation)),
+            relationships: (): WebRelationship[] => {
+                const user = scope.current();
+                const visible = app.sessions(user);
+                const ids = new Set(visible.map((session) => session.id));
+
+                return visible.flatMap((session) =>
+                    app
+                        .conversationsOf(session.id as ConversationId)
+                        .filter((id) => app.canSee(scope.current(), id))
+                        .map((id) => {
+                            const parent = app.parentOf(id);
+                            const meta = app.sessionMeta(id);
+
+                            return {
+                                conversationId: Number(id),
+                                sessionId: session.id,
+                                ...(parent === undefined || !app.canSee(scope.current(), parent)
+                                    ? {}
+                                    : { parentId: Number(parent) }),
+                                ...(meta?.linkedFrom === undefined || !ids.has(meta.linkedFrom.id)
+                                    ? {}
+                                    : { linkedFrom: meta.linkedFrom.id }),
+                                ...(meta?.forkedFrom === undefined || !ids.has(meta.forkedFrom.id)
+                                    ? {}
+                                    : { forkedFrom: structuredClone(meta.forkedFrom) }),
+                            };
+                        }),
+                );
+            },
+            usageHistoryOf: (conversation: number) => {
+                const target = conversationIdOf(conversation);
+
+                return read(target, () => app.inspection.usageHistory(target));
+            },
+            requestHistoryOf: (conversation: number) => {
+                const target = conversationIdOf(conversation);
+
+                return read(target, () => app.inspection.requestHistory(target));
+            },
             transcriptOf: (conversation: number, options?: unknown) => {
                 const target = conversationIdOf(conversation);
 
                 app.requireSee(scope.current(), target);
 
-                return app.transcripts.transcript(target, transcriptOptions(options));
+                return read(target, () =>
+                    app.transcripts.transcript(target, transcriptOptions(options)),
+                );
+            },
+            toolActivityOf: (conversation: number) => {
+                const target = conversationIdOf(conversation);
+
+                return read(target, () => app.transcripts.toolActivity(target));
             },
             usageOf: (conversation: number) => {
                 const target = conversationIdOf(conversation);
 
                 app.requireSee(scope.current(), target);
 
-                return app.transcripts.usage(target);
+                return read(target, () => app.transcripts.usage(target));
             },
-            imageOf: async (conversation: number, entry: number, index: number) => {
+            imageOf: async (
+                conversation: number,
+                entry: number,
+                index: number,
+                location?: { messageIndex?: number; editIndex?: number },
+            ) => {
                 const target = conversationIdOf(conversation);
 
                 app.requireSee(scope.current(), target);
@@ -179,7 +268,26 @@ export async function extensionRoute(
                     throw new HttpError(400, "The image must be a whole number of 0 or more.");
                 }
 
-                const image = await app.transcripts.entryImage(target, entry, index);
+                if (
+                    location !== undefined &&
+                    (typeof location !== "object" ||
+                        location === null ||
+                        Array.isArray(location) ||
+                        Object.values(location).some(
+                            (value) =>
+                                value !== undefined &&
+                                (!Number.isSafeInteger(value) || (value as number) < 0),
+                        ))
+                ) {
+                    throw new HttpError(
+                        400,
+                        "Image message and edit indices must be whole numbers of 0 or more.",
+                    );
+                }
+
+                const image = await read(target, () =>
+                    app.transcripts.entryImage(target, entry, index, location),
+                );
 
                 return image === undefined
                     ? undefined
@@ -327,6 +435,32 @@ function transcriptOptions(value: unknown): TranscriptOptions {
         ...(after === undefined ? {} : { after: after as number }),
         ...(limit === undefined ? {} : { limit: limit as number }),
         ...(full === undefined ? {} : { full: full as boolean }),
+    };
+}
+
+/** Native context reads accept a visible entry and the same clipping choice as transcripts. */
+function modelContextOptions(value: unknown): ModelContextOptions {
+    if (value === undefined) {
+        return {};
+    }
+
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new HttpError(400, "The model context options must be an object.");
+    }
+
+    const { at, full } = value as Record<string, unknown>;
+
+    if (at !== undefined && !(Number.isSafeInteger(at) && (at as number) > 0)) {
+        throw new HttpError(400, "at must be a positive whole entry id.");
+    }
+
+    if (full !== undefined && typeof full !== "boolean") {
+        throw new HttpError(400, "full must be true or false.");
+    }
+
+    return {
+        ...(at === undefined ? {} : { at: at as number }),
+        ...(full === undefined ? {} : { full }),
     };
 }
 

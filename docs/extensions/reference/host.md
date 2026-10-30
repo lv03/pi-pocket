@@ -474,6 +474,8 @@ interface AppEvents {
     };
     "run.started": { conversationId: number; session: number };
     "run.ended": { conversationId: number; session: number };
+    "request.completed": { conversationId: number; session: number; at: number; requestId: string };
+    "usage.updated": { conversationId: number; session: number; at: number };
 }
 ```
 
@@ -484,6 +486,8 @@ What each event's listener gets.
 - `session.created`: a session in the list was made, by a person, a fork (`forkedFrom`), a linked start (`linkedFrom`), or a resend. `createdBy` is a person's id. Subagents are not sessions in the list, and send none.
 - `session.renamed`, `session.archived`: its new title, or whether it is archived now.
 - `message.sent`: a person's message to Pi, a steer or a queued one too. `by` is their id. `text` is the words as stored, with values that extensions hide already hidden and attachments left out. `via` names what sent it for them, such as PiP or a schedule.
+- Since 0.26.0, `request.completed` reports a persisted terminal normalized request capture while Context Insight is enabled. `requestId` identifies its capture.
+- Since 0.26.0, `usage.updated` reports an authoritative own usage document change. Both new events identify `conversationId`, its root `session`, and the server observation time `at`. Neither event contains messages or credentials. PiP emits neither event. Pass the returned listener cleanup to `web.onDispose`.
 - `run.started`, `run.ended`: Pi started or stopped working in a conversation. `conversationId` is that conversation, a session's or a subagent's; `session` is the session it belongs to.
 
 ### `AppEventName`
@@ -494,7 +498,7 @@ type AppEventName = keyof AppEvents;
 
 Since 0.22.0 · Experimental
 
-The name of an event: `"session.created"`, `"session.renamed"`, `"session.archived"`, `"message.sent"`, `"run.started"`, or `"run.ended"`.
+The name of an event: `"session.created"`, `"session.renamed"`, `"session.archived"`, `"message.sent"`, `"run.started"`, `"run.ended"`, `"request.completed"`, or `"usage.updated"`.
 
 ## Types for asking, hiding, and the browser
 

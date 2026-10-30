@@ -60,6 +60,18 @@ type CallRecord = {
     path?: string;
     durationMs?: number;
     error?: string;
+    callId?: string;
+    parentCallId?: string;
+    arguments?: JsonObject;
+    startedAt?: number;
+    endedAt?: number;
+    output?: { type: "text"; text: string }[];
+    details?: JsonValue;
+    diagnostics?: ToolDiagnostic[];
+    outputRecorded?: boolean;
+    clipped?: number;
+    truncated?: boolean;
+    isError?: boolean;
 };
 type CodemodeDetails = { calls: CallRecord[]; fullOutputPath?: string };
 
@@ -196,10 +208,29 @@ export default function createCodemode(_host: PocketHost) {
                 (tool) => tool.name !== CODEMODE_TOOL,
             ) as ToolRegistration[];
             const hooks = toolHooks(agent.extensions);
+            const inspect = agent.extensions.some(
+                (extension) => extension.name === "pocket-context-insight",
+            );
+            let recordedChars = 0;
             const calls: CallRecord[] = [];
             const publish = () =>
                 void api
-                    .details({ calls: calls.map((call) => ({ ...call })) }, context)
+                    .details(
+                        {
+                            calls: calls.map((call) => {
+                                const {
+                                    output: _output,
+                                    details: _details,
+                                    diagnostics: _diagnostics,
+                                    arguments: _arguments,
+                                    ...summary
+                                } = call;
+
+                                return summary;
+                            }),
+                        },
+                        context,
+                    )
                     .catch(() => {});
             let next = 0;
 
@@ -216,7 +247,13 @@ export default function createCodemode(_host: PocketHost) {
                     name: tool.name,
                     arguments: (input ?? {}) as JsonObject,
                 };
-                const record: CallRecord = { name: tool.name, status: "running" };
+                const record: CallRecord = {
+                    name: tool.name,
+                    status: "running",
+                    ...(inspect
+                        ? { callId: call.id, parentCallId: api.callId, startedAt: Date.now() }
+                        : {}),
+                };
 
                 calls.push(record);
                 publish();
@@ -270,6 +307,10 @@ export default function createCodemode(_host: PocketHost) {
 
                     callArgs = check(callArgs);
 
+                    if (inspect) {
+                        record.arguments = callArgs;
+                    }
+
                     if (typeof callArgs.path === "string") {
                         record.path = callArgs.path;
                     }
@@ -310,10 +351,27 @@ export default function createCodemode(_host: PocketHost) {
                             )) ?? result;
                     }
 
-                    const text = bound(
-                        resultText(result, diagnostics),
-                        tool.outputLimits?.retain ?? "head",
-                    );
+                    const rawText = resultText(result, diagnostics);
+                    const text = bound(rawText, tool.outputLimits?.retain ?? "head");
+
+                    if (inspect) {
+                        // Diagnostic metadata is not extra model output. Keep the omitted count explicit.
+                        const room = Math.max(0, Math.min(100_000, 1_000_000 - recordedChars));
+                        const shown = rawText.slice(0, room);
+
+                        recordedChars += shown.length;
+                        record.output = [{ type: "text", text: shown }];
+                        record.outputRecorded = true;
+                        record.clipped = Math.max(0, rawText.length - shown.length);
+                        record.truncated = record.clipped > 0;
+
+                        if (result.details !== undefined) {
+                            record.details = result.details;
+                        }
+
+                        record.diagnostics = [...diagnostics, ...(result.diagnostics ?? [])];
+                        record.isError = result.isError === true;
+                    }
 
                     if (result.isError === true) {
                         throw new Error(text || `Tool ${tool.name} failed`);
@@ -329,6 +387,11 @@ export default function createCodemode(_host: PocketHost) {
                     throw error;
                 } finally {
                     record.durationMs = Math.round(performance.now() - callStarted);
+
+                    if (inspect) {
+                        record.endedAt = Date.now();
+                    }
+
                     publish();
                 }
             };

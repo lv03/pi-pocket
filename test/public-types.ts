@@ -26,6 +26,13 @@ import type {
     PublicLinkRequest as RealPublicLinkRequest,
     PublicLinks as RealPublicLinks,
     PublicPageRequest as RealPublicPageRequest,
+    ModelContextOptions as RealModelContextOptions,
+    ModelContextSnapshot as RealModelContextSnapshot,
+    ModelMessageOrigin as RealModelMessageOrigin,
+    ModelRequestCapture as RealModelRequestCapture,
+    UsageHistory as RealUsageHistory,
+    UsageHistoryEvent as RealUsageHistoryEvent,
+    WebRelationship as RealWebRelationship,
     TranscriptEntry as RealTranscriptEntry,
     TranscriptMessage as RealTranscriptMessage,
     TranscriptOptions as RealTranscriptOptions,
@@ -34,6 +41,9 @@ import type {
     TranscriptTool as RealTranscriptTool,
     WebRequest as RealWebRequest,
     WebSubagent as RealWebSubagent,
+    ToolActivityRow as RealToolActivityRow,
+    ToolActivityResult as RealToolActivityResult,
+    ToolActivityStatus as RealToolActivityStatus,
 } from "../src/server/host.ts";
 import type {
     Command,
@@ -59,6 +69,13 @@ import type {
     PublicLinkRequest,
     PublicLinks,
     PublicPageRequest,
+    ModelContextOptions,
+    ModelContextSnapshot,
+    ModelMessageOrigin,
+    ModelRequestCapture,
+    UsageHistory,
+    UsageHistoryEvent,
+    WebRelationship,
     TranscriptEntry,
     TranscriptMessage,
     TranscriptOptions,
@@ -68,6 +85,9 @@ import type {
     Web,
     WebRequest,
     WebSubagent,
+    ToolActivityRow,
+    ToolActivityResult,
+    ToolActivityStatus,
 } from "../types/pocket.d.ts";
 
 /**
@@ -151,6 +171,24 @@ export const appEvents = (real: RealAppEvents): AppEvents => real;
 export const appEventsBack = (types: AppEvents): RealAppEvents => types;
 export const settingField = (real: RealSettingField): SettingField => real;
 export const settingFieldBack = (types: SettingField): RealSettingField => types;
+export const modelContextOptions = (real: RealModelContextOptions): ModelContextOptions => real;
+export const modelContextOptionsBack = (types: ModelContextOptions): RealModelContextOptions =>
+    types;
+export const modelContextSnapshot = (real: RealModelContextSnapshot): ModelContextSnapshot => real;
+export const modelContextSnapshotBack = (types: ModelContextSnapshot): RealModelContextSnapshot =>
+    types;
+export const modelMessageOrigin = (real: RealModelMessageOrigin): ModelMessageOrigin => real;
+export const modelMessageOriginBack = (types: ModelMessageOrigin): RealModelMessageOrigin => types;
+export const modelRequestCapture = (real: RealModelRequestCapture): ModelRequestCapture => real;
+export const modelRequestCaptureBack = (types: ModelRequestCapture): RealModelRequestCapture =>
+    types;
+export const usageHistory = (real: RealUsageHistory): UsageHistory => real;
+export const usageHistoryBack = (types: UsageHistory): RealUsageHistory => types;
+export const usageHistoryEvent = (real: RealUsageHistoryEvent): UsageHistoryEvent => real;
+export const usageHistoryEventBack = (types: UsageHistoryEvent): RealUsageHistoryEvent => types;
+export const webRelationship = (real: RealWebRelationship): WebRelationship => real;
+export const webRelationshipBack = (types: WebRelationship): RealWebRelationship => types;
+
 export const transcriptOptions = (real: RealTranscriptOptions): TranscriptOptions => real;
 export const transcriptOptionsBack = (types: TranscriptOptions): RealTranscriptOptions => types;
 export const transcriptPage = (real: RealTranscriptPage): TranscriptPage => real;
@@ -165,6 +203,12 @@ export const transcriptTool = (real: RealTranscriptTool): TranscriptTool => real
 export const transcriptToolBack = (types: TranscriptTool): RealTranscriptTool => types;
 export const webSubagent = (real: RealWebSubagent): WebSubagent => real;
 export const webSubagentBack = (types: WebSubagent): RealWebSubagent => types;
+export const toolActivityRow = (real: RealToolActivityRow): ToolActivityRow => real;
+export const toolActivityRowBack = (types: ToolActivityRow): RealToolActivityRow => types;
+export const toolActivityResult = (real: RealToolActivityResult): ToolActivityResult => real;
+export const toolActivityResultBack = (types: ToolActivityResult): RealToolActivityResult => types;
+export const toolActivityStatus = (real: RealToolActivityStatus): ToolActivityStatus => real;
+export const toolActivityStatusBack = (types: ToolActivityStatus): RealToolActivityStatus => types;
 export const linked = (real: RealLinkedSession): LinkedSession => real;
 export const linkedBack = (types: LinkedSession): RealLinkedSession => types;
 
