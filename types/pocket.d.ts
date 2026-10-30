@@ -14,7 +14,7 @@
  * fails when this file and Pi Pocket's code do not agree.
  */
 import type { Context } from "@earendil-works/chord";
-import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ProviderConfig, Skill } from "@earendil-works/pi-coding-agent";
 import type {
     ConversationId,
@@ -23,6 +23,7 @@ import type {
     ModelRef,
     TaskId,
     Tx,
+    UsageState,
 } from "@earendil-works/pi-durable";
 import type { ComponentType, Fragment, FunctionComponent, h, VNode } from "preact";
 import type {
@@ -34,6 +35,10 @@ import type {
     useRef,
     useState,
 } from "preact/hooks";
+
+// The shapes of the figures a transcript read gives back: a module can name them without a second import.
+export type { Usage } from "@earendil-works/pi-ai";
+export type { UsageState } from "@earendil-works/pi-durable";
 
 // ─── Common ──────────────────────────────────────────────────────────────────
 
@@ -957,6 +962,33 @@ export interface WebRequest {
      * @experimental
      */
     sessions(): readonly WebSession[];
+    /**
+     * A page of any conversation's stored transcript that the person who asked may see: a session, or a subagent of
+     * one. Throws a 404 for a conversation they may not see.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    transcriptOf(conversation: number, options?: TranscriptOptions): Promise<TranscriptPage>;
+    /**
+     * Any conversation's `pi.usage` totals that the person who asked may see. Undefined before the first response.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    usageOf(conversation: number): Promise<UsageState | undefined>;
+    /**
+     * One image of a stored message that the person who asked may see, as its type and base64 data. Undefined when
+     * the entry has no such image. Throws a 404 for a conversation they may not see.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    imageOf(
+        conversation: number,
+        entry: number,
+        index: number,
+    ): Promise<{ readonly mimeType: string; readonly data: string } | undefined>;
 }
 
 /**
@@ -998,6 +1030,183 @@ export interface WebSession {
 }
 
 /**
+ * What a route asks for when it reads a conversation's stored transcript: the messages and answers as they were
+ * stored, oldest first, with each part's size in the tokens that Pi's own meter counts.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export interface TranscriptOptions {
+    /** Entries newer than this id, oldest first. Absent or 0 starts at the beginning. */
+    after?: number;
+    /** At most this many entries, from 1 to 200. 100 by default. */
+    limit?: number;
+    /**
+     * With true, text as it was stored. Without, long text is clipped for reading; `tokens` still counts all of it, so
+     * a figure is right even when the text a page carries is not whole.
+     */
+    full?: boolean;
+}
+
+/**
+ * A page of a conversation's stored transcript.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export interface TranscriptPage {
+    readonly entries: readonly TranscriptEntry[];
+    /** The newest entry's id, or `after` when the page was empty: give it as `after` for the next page. */
+    readonly last: number;
+    /** True when more entries follow this page. */
+    readonly more: boolean;
+}
+
+/**
+ * One stored entry: what it is, when it was made, and the messages it adds to the model's context.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export interface TranscriptEntry {
+    readonly id: number;
+    /** The stored kind, such as `pi.user`, `pi.assistant`, `pi.compaction`, or a kind of Pi Pocket's own. */
+    readonly kind: string;
+    /** When its first message was made, in milliseconds since 1970 on the server's clock, when the message says. */
+    readonly at?: number;
+    /** The first entry of the active context that this entry selects: a compaction's head, or a reset's own id. */
+    readonly head?: number;
+    /** The entry's own payload, such as a compaction's `reason`, which may change in any release. */
+    readonly data?: unknown;
+    /** How this entry changes what earlier entries give the model, if it does. */
+    readonly edits?: readonly TranscriptEdit[];
+    readonly messages?: readonly TranscriptMessage[];
+}
+
+/**
+ * An entry's change to what another visible entry gives the model: omit it, or give other messages instead.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export type TranscriptEdit =
+    | { readonly target: number; readonly action: "omit" }
+    | {
+          readonly target: number;
+          readonly action: "replace";
+          readonly messages: readonly TranscriptMessage[];
+      };
+
+/**
+ * One message as the transcript stores it. Image bytes are left out: `tokens` counts each image as the meter does.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export type TranscriptMessage =
+    | {
+          readonly role: "system";
+          readonly content: string;
+          readonly tokens: number;
+          /** The sections this message sets; null removes one. */
+          readonly sections?: Readonly<Record<string, string | null>>;
+          readonly tools?: readonly TranscriptTool[];
+          readonly toolsRemoved?: readonly string[];
+      }
+    | {
+          readonly role: "user";
+          readonly parts: readonly TranscriptPart[];
+          readonly tokens: number;
+      }
+    | {
+          readonly role: "assistant";
+          readonly parts: readonly TranscriptPart[];
+          readonly tokens: number;
+          readonly provider?: string;
+          readonly model?: string;
+          /** What the provider billed for this response, as Pi stores it. */
+          readonly usage?: Usage;
+          readonly stopReason?: string;
+          readonly error?: string;
+          readonly durationMs?: number;
+      }
+    | {
+          readonly role: "toolResult";
+          readonly callId: string;
+          readonly name: string;
+          readonly parts: readonly TranscriptPart[];
+          readonly tokens: number;
+          readonly isError: boolean;
+      };
+
+/**
+ * A part of a message, with the tokens that Pi's meter counts for it.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export type TranscriptPart =
+    | {
+          readonly type: "text";
+          readonly text: string;
+          readonly tokens: number;
+          readonly clipped?: number;
+      }
+    | {
+          readonly type: "thinking";
+          readonly text: string;
+          readonly tokens: number;
+          readonly redacted?: boolean;
+          readonly clipped?: number;
+      }
+    | {
+          readonly type: "toolCall";
+          readonly id: string;
+          readonly name: string;
+          readonly arguments: unknown;
+          readonly tokens: number;
+      }
+    | { readonly type: "image"; readonly mimeType?: string; readonly tokens: number };
+
+/**
+ * A tool as a system message defines it, with the tokens its definition costs in the request.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export interface TranscriptTool {
+    readonly name: string;
+    readonly description?: string;
+    readonly parameters?: unknown;
+    readonly tokens: number;
+    /** The extension that registered it, when the registry knows one. */
+    readonly source?: string;
+}
+
+/**
+ * A subagent of a session, as its Fleet view gets it.
+ *
+ * @since 0.26.0
+ * @experimental
+ */
+export interface WebSubagent {
+    readonly name: string;
+    /** The subagent's own conversation, which a person can open. */
+    readonly conversationId: number;
+    readonly busy: boolean;
+    /** Its request waits for an approval, or for its provider's limit to clear. */
+    readonly waiting?: true;
+    readonly failed?: true;
+    readonly stopped?: true;
+    readonly asked?: string;
+    readonly askedAt?: number;
+    readonly answeredAt?: number;
+    readonly error?: string;
+    /** Its answer is on its way to the session. */
+    readonly reporting?: true;
+}
+
+/**
  * A request whose named path parameter resolved to an authorized conversation.
  * @since 0.16.0
  */
@@ -1018,6 +1227,28 @@ export interface ConversationWebRequest extends WebRequest {
      * @since 0.16.0
      */
     readonly linkedSessions: HumanLinkedSessions;
+    /**
+     * A page of this conversation's stored transcript, oldest first: its own entries and those it inherited from a
+     * fork, with the ones a compaction removed too.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    transcript(options?: TranscriptOptions): Promise<TranscriptPage>;
+    /**
+     * This conversation's token and cost totals, from Pi Durable's `pi.usage`. Undefined before the first response.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    usage(): Promise<UsageState | undefined>;
+    /**
+     * The session's subagents, each with its own conversation. Empty when it started none.
+     *
+     * @since 0.26.0
+     * @experimental
+     */
+    subagents(): readonly WebSubagent[];
 }
 
 /**

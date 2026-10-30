@@ -2070,6 +2070,22 @@ export class PocketApp {
      * Every subagent in the sessions this person can see, for the subagents board, but a session's oldest finished ones
      * past `BOARD_FINISHED`. Archived sessions are left out, unless one of their subagents works or waits there.
      */
+    /** Every tool's extension, by tool name, from the registry now. */
+    toolSources(): Record<string, string> {
+        const sources: Record<string, string> = {};
+
+        for (const { extension, tool } of this.#registry?.snapshot().tools() ?? []) {
+            sources[tool.name] = extension.name;
+        }
+
+        return sources;
+    }
+
+    /** One session's subagents, as its Fleet view gets them. */
+    subagentsOf(id: ConversationId): SubagentEntry[] {
+        return forBoard(this.#subagentsBySession().get(String(id)) ?? []);
+    }
+
     subagents(user?: User): SubagentEntry[] {
         const all: SubagentEntry[] = [];
 

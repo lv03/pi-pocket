@@ -9,7 +9,12 @@ import { describe, HttpError } from "../errors.ts";
 import { exposedError, MAX_FILE_BYTES } from "../extension-web.ts";
 import { ExtensionRequest } from "../extension-request.ts";
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { ConversationWebRequest, WebSession } from "../host.ts";
+import type {
+    ConversationWebRequest,
+    TranscriptOptions,
+    WebSession,
+    WebSubagent,
+} from "../host.ts";
 import { type ApiRequest, json, readChecked, readJson, send, SVG_CSP } from "./io.ts";
 
 /** A request to a module's route: `parts` is the path after `/api/x/`. */
@@ -113,6 +118,30 @@ export async function extensionRoute(
                       },
                       linkedSessions: app.linkedSessions.forRequest(id, scope),
                   };
+        const readings =
+            id === undefined
+                ? {}
+                : {
+                      transcript: (options?: unknown) =>
+                          app.transcripts.transcript(id, transcriptOptions(options)),
+                      usage: () => app.transcripts.usage(id),
+                      subagents: (): WebSubagent[] =>
+                          app.subagentsOf(id).map((agent) => ({
+                              name: agent.name,
+                              conversationId: Number(agent.conversationId),
+                              busy: agent.busy,
+                              ...(agent.waiting === true ? { waiting: true as const } : {}),
+                              ...(agent.failed === true ? { failed: true as const } : {}),
+                              ...(agent.stopped === true ? { stopped: true as const } : {}),
+                              ...(agent.asked === undefined ? {} : { asked: agent.asked }),
+                              ...(agent.askedAt === undefined ? {} : { askedAt: agent.askedAt }),
+                              ...(agent.answeredAt === undefined
+                                  ? {}
+                                  : { answeredAt: agent.answeredAt }),
+                              ...(agent.error === undefined ? {} : { error: agent.error }),
+                              ...(agent.reporting === true ? { reporting: true as const } : {}),
+                          })),
+                  };
         const input = {
             method: route.method,
             params,
@@ -123,6 +152,39 @@ export async function extensionRoute(
             context: scope.context,
             snapshot: scope.snapshot,
             commit: scope.commit,
+            transcriptOf: (conversation: number, options?: unknown) => {
+                const target = conversationIdOf(conversation);
+
+                app.requireSee(scope.current(), target);
+
+                return app.transcripts.transcript(target, transcriptOptions(options));
+            },
+            usageOf: (conversation: number) => {
+                const target = conversationIdOf(conversation);
+
+                app.requireSee(scope.current(), target);
+
+                return app.transcripts.usage(target);
+            },
+            imageOf: async (conversation: number, entry: number, index: number) => {
+                const target = conversationIdOf(conversation);
+
+                app.requireSee(scope.current(), target);
+
+                if (!Number.isSafeInteger(entry) || entry <= 0) {
+                    throw new HttpError(400, "The entry must be a positive whole number.");
+                }
+
+                if (!Number.isSafeInteger(index) || index < 0) {
+                    throw new HttpError(400, "The image must be a whole number of 0 or more.");
+                }
+
+                const image = await app.transcripts.entryImage(target, entry, index);
+
+                return image === undefined
+                    ? undefined
+                    : { mimeType: image.mimeType, data: image.data.toString("base64") };
+            },
             // Read when the handler asks, as the person is then: a copy, so the handler cannot change the list.
             sessions: (): WebSession[] =>
                 app.sessions(scope.current()).map((session) => ({
@@ -133,6 +195,7 @@ export async function extensionRoute(
                     updatedAt: session.updatedAt,
                 })),
             ...bound,
+            ...readings,
         };
 
         result = await route.handle(input as ConversationWebRequest);
@@ -231,4 +294,47 @@ export function extensionFile(
         "cross-origin-resource-policy": "same-origin",
         ...(found.type === "image/svg+xml" ? { "content-security-policy": SVG_CSP } : {}),
     });
+}
+
+/** What a route may ask a transcript read for: whole numbers, a limit the server takes, and a boolean. */
+function transcriptOptions(value: unknown): TranscriptOptions {
+    if (value === undefined) {
+        return {};
+    }
+
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new HttpError(400, "The transcript options must be an object.");
+    }
+
+    const { after, limit, full } = value as Record<string, unknown>;
+
+    if (after !== undefined && !(Number.isSafeInteger(after) && (after as number) >= 0)) {
+        throw new HttpError(400, "after must be an entry id, a whole number of 0 or more.");
+    }
+
+    if (
+        limit !== undefined &&
+        !(Number.isSafeInteger(limit) && (limit as number) >= 1 && (limit as number) <= 200)
+    ) {
+        throw new HttpError(400, "limit must be a whole number from 1 to 200.");
+    }
+
+    if (full !== undefined && typeof full !== "boolean") {
+        throw new HttpError(400, "full must be true or false.");
+    }
+
+    return {
+        ...(after === undefined ? {} : { after: after as number }),
+        ...(limit === undefined ? {} : { limit: limit as number }),
+        ...(full === undefined ? {} : { full: full as boolean }),
+    };
+}
+
+/** A conversation id a route asks to read: a positive whole number. */
+function conversationIdOf(value: unknown): ConversationId {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+        throw new HttpError(400, "The conversation must be a positive whole number.");
+    }
+
+    return value as ConversationId;
 }

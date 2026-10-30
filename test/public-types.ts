@@ -26,7 +26,14 @@ import type {
     PublicLinkRequest as RealPublicLinkRequest,
     PublicLinks as RealPublicLinks,
     PublicPageRequest as RealPublicPageRequest,
+    TranscriptEntry as RealTranscriptEntry,
+    TranscriptMessage as RealTranscriptMessage,
+    TranscriptOptions as RealTranscriptOptions,
+    TranscriptPage as RealTranscriptPage,
+    TranscriptPart as RealTranscriptPart,
+    TranscriptTool as RealTranscriptTool,
     WebRequest as RealWebRequest,
+    WebSubagent as RealWebSubagent,
 } from "../src/server/host.ts";
 import type {
     Command,
@@ -52,8 +59,15 @@ import type {
     PublicLinkRequest,
     PublicLinks,
     PublicPageRequest,
+    TranscriptEntry,
+    TranscriptMessage,
+    TranscriptOptions,
+    TranscriptPage,
+    TranscriptPart,
+    TranscriptTool,
     Web,
     WebRequest,
+    WebSubagent,
 } from "../types/pocket.d.ts";
 
 /**
@@ -137,6 +151,20 @@ export const appEvents = (real: RealAppEvents): AppEvents => real;
 export const appEventsBack = (types: AppEvents): RealAppEvents => types;
 export const settingField = (real: RealSettingField): SettingField => real;
 export const settingFieldBack = (types: SettingField): RealSettingField => types;
+export const transcriptOptions = (real: RealTranscriptOptions): TranscriptOptions => real;
+export const transcriptOptionsBack = (types: TranscriptOptions): RealTranscriptOptions => types;
+export const transcriptPage = (real: RealTranscriptPage): TranscriptPage => real;
+export const transcriptPageBack = (types: TranscriptPage): RealTranscriptPage => types;
+export const transcriptEntry = (real: RealTranscriptEntry): TranscriptEntry => real;
+export const transcriptEntryBack = (types: TranscriptEntry): RealTranscriptEntry => types;
+export const transcriptMessage = (real: RealTranscriptMessage): TranscriptMessage => real;
+export const transcriptMessageBack = (types: TranscriptMessage): RealTranscriptMessage => types;
+export const transcriptPart = (real: RealTranscriptPart): TranscriptPart => real;
+export const transcriptPartBack = (types: TranscriptPart): RealTranscriptPart => types;
+export const transcriptTool = (real: RealTranscriptTool): TranscriptTool => real;
+export const transcriptToolBack = (types: TranscriptTool): RealTranscriptTool => types;
+export const webSubagent = (real: RealWebSubagent): WebSubagent => real;
+export const webSubagentBack = (types: WebSubagent): RealWebSubagent => types;
 export const linked = (real: RealLinkedSession): LinkedSession => real;
 export const linkedBack = (types: LinkedSession): RealLinkedSession => types;
 

@@ -62,6 +62,8 @@ The host's members do not change while modules reload. A new member comes only a
 - `publicPage` and `links` (experimental, since 0.22.0): pages at `/l/<token>` for anyone with a module's link, what a page handler gets (`PublicPageRequest`), and what its answer does ([Public pages](../public-pages.md)).
 - What a route handler gets (`WebRequest`: `method`, `params`, `query`, `body`, `user`, `signal`; since 0.16.0 also request-lifetime `snapshot`, `context`, `commit`), and what its answer does.
 - A conversation-bound request's `conversation` metadata and human `linkedSessions.start` / `list`, with their authenticated-actor, receipt, and admission checks (since 0.16.0).
+- A conversation-bound request's `transcript`, `usage`, and `subagents` (experimental, since 0.26.0): pages of the stored transcript with Pi's own token estimates, the conversation's `pi.usage`, and its subagents with their own conversations. The server checks the person may see the conversation first.
+- Any route's `transcriptOf(conversation, options)`, `usageOf(conversation)`, and `imageOf(conversation, entry, index)` (experimental, since 0.26.0): the same reads for a conversation id the person may see, such as a subagent's, and one stored image as base64. They answer 404 for a conversation the person may not see.
 - The route paths, the methods, the `access` values (`owner`, `steer`, `view`), and the `X-Pocket` header that every call to a route must have.
 
 ### 5. A command's `ctx` and result

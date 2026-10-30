@@ -44,7 +44,7 @@ The types file imports types from Pi Durable, Pi AI, and Preact by package name.
 ## What the types file has
 
 - [`Host`](host.md) and the types that it uses: `SafeText`, `LinkedSessions`, and `LinkedSession`.
-- [`Web`](web.md) and the types that it uses: `WebAccess`, `WebMethod`, `WebHandler`, and `WebRequest`.
+- [`Web`](web.md) and the types that it uses: `WebAccess`, `WebMethod`, `WebHandler`, `WebRequest`, and, since 0.26.0 (experimental), `WebSubagent`, `TranscriptOptions`, `TranscriptPage`, `TranscriptEntry`, `TranscriptEdit`, `TranscriptMessage`, `TranscriptPart`, and `TranscriptTool`.
 - [`Command`, `CommandContext`, and `CommandResult`](command-context.md).
 - [`Pocket`](pocket.md) and the types that it uses: `BrowserModule`, `Action`, the objects that you give (`RailSpec`, `MenuSpec`, `LauncherSpec`, `PageSpec`, `SheetSpec`, `ToolCallSpec`, `CallSummary`), `Added`, `PageProps`, `SheetProps`, and the props of the pieces.
 - `Module`, `Person`, `Role`, and `NoticeLevel`, on this page.

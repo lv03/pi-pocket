@@ -10,6 +10,7 @@ import {
     openApp,
     owner,
     root,
+    say,
     scriptedModel,
     until,
 } from "./helpers.ts";
@@ -31,9 +32,15 @@ import type {
     ConversationWebRequest,
     ExtensionWeb,
     PocketHost,
+    TranscriptPage,
     WebRequest,
 } from "../src/server/host.ts";
-import { AgentDoc, defineDoc, type ConversationId } from "@earendil-works/pi-durable";
+import {
+    AgentDoc,
+    defineDoc,
+    type ConversationId,
+    type UsageState,
+} from "@earendil-works/pi-durable";
 import { pocketVersion } from "../src/server/versions.ts";
 import { ExtensionWebs } from "../src/server/extension-web.ts";
 import { PlanDoc, TurnsDoc } from "../src/server/docs.ts";
@@ -137,6 +144,24 @@ export default function(host, web) {
         globalThis.workspaceRequest = req;
         return req.linkedSessions.start(req.body, req.body.key);
     }, { conversation: "source", access: "view" });
+    web.conversationRoute("GET", "read/:source", async req => ({
+        transcript: await req.transcript({
+            limit: Number(req.query.get("limit") ?? 100),
+            full: true,
+        }),
+        usage: await req.usage(),
+        subagents: req.subagents(),
+        other: await req.transcriptOf(Number(req.conversation.id), { limit: 1 }),
+        otherUsage: await req.usageOf(Number(req.conversation.id)),
+        image: await (async () => {
+            const first = await req.transcript({ limit: 1 });
+
+            return first.entries[0] === undefined
+                ? undefined
+                : await req.imageOf(Number(req.conversation.id), first.entries[0].id, 0);
+        })(),
+    }), { conversation: "source", access: "view" });
+    web.route("GET", "other/:id", req => req.transcriptOf(Number(req.params.id)), { access: "view" });
 }
 `,
     );
@@ -645,6 +670,64 @@ test("bound routes use the clicking actor, keep receipts private, and expose aut
             .pocketVersion,
         pocketVersion(),
     );
+});
+
+test("a bound route reads the stored transcript and usage, priced by Pi's meter", async () => {
+    const id = await newSession(app);
+
+    await say(app, id, "hello transcript");
+
+    const answer = await call("Vic", `/api/x/workspace/read/${id}`);
+
+    assert.equal(answer.status, 200);
+
+    const data = answer.data as {
+        transcript: TranscriptPage;
+        usage: UsageState;
+        subagents: unknown[];
+        other: TranscriptPage;
+        otherUsage?: UsageState;
+        image?: { mimeType: string; data: string };
+    };
+    const kinds = data.transcript.entries.map((entry) => entry.kind);
+
+    assert.ok(kinds.includes("pi.system"));
+    assert.ok(kinds.includes("pi.user"));
+    assert.ok(kinds.includes("pi.assistant"));
+
+    const user = data.transcript.entries.find((entry) => entry.kind === "pi.user")!;
+    const userMessage = user.messages?.[0];
+
+    assert.equal(userMessage?.role, "user");
+    assert.ok(userMessage !== undefined && userMessage.tokens > 0);
+    assert.ok(typeof user.at === "number");
+
+    const assistant = data.transcript.entries.find((entry) => entry.kind === "pi.assistant")!;
+    const assistantMessage = assistant.messages?.[0];
+
+    assert.equal(assistantMessage?.role, "assistant");
+    assert.ok(assistantMessage !== undefined && assistantMessage.tokens >= 0);
+    assert.ok(assistantMessage.usage !== undefined);
+    assert.ok(data.usage?.models["faux/faux-1"] !== undefined);
+    assert.deepEqual(data.subagents, []);
+    assert.equal(data.transcript.more, false);
+    assert.ok(data.other.entries.length >= 1);
+    assert.ok(data.otherUsage?.models["faux/faux-1"] !== undefined);
+    assert.equal((await call("Vic", "/api/x/workspace/other/999999")).status, 404);
+    assert.equal(data.image, undefined);
+    assert.equal(
+        data.transcript.last,
+        Math.max(...data.transcript.entries.map((entry) => entry.id)),
+    );
+
+    const first = await call("Vic", `/api/x/workspace/read/${id}?limit=1`);
+    const page = (first.data as { transcript: TranscriptPage }).transcript;
+
+    assert.equal(page.entries.length, 1);
+    assert.equal(page.more, true);
+    assert.equal(page.last, page.entries[0]!.id);
+    assert.equal((await call("Vic", `/api/x/workspace/read/${id}?limit=0`)).status, 400);
+    assert.equal((await call("Sid", `/api/x/workspace/read/${id}`)).status, 404);
 });
 
 test("a human linked start admits the requested folder and leaves its source in place", async () => {

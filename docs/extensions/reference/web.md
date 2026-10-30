@@ -258,6 +258,8 @@ What a handler gets.
 - Document operations recheck the current person. Retaining a request, its context, or a callback does not extend its lifetime: commits after disconnect or handler return are refused, and an unfinished callback rolls back. Await all writes before returning. These APIs are for module documents, not core's internal documents or a way to start model work.
 - An unbound catalog save has no source plan, turn, or spend checks. A bound commit also requires the source's current steering and turn rights.
 - Since 0.20.0 (experimental), `sessions()` gives the sessions that the person who asked can see now, as their session list shows them, archived ones too. See [`WebSession`](#websession). Use it to check the ids that a browser sends, and to keep data about sessions from people who cannot see them. Each call reads the list again.
+- Since 0.26.0 (experimental), `transcriptOf(conversation, options)` and `usageOf(conversation)` read any conversation the person who asked may see: a session, or a subagent of one. They are the same reads as a [`ConversationWebRequest`](#conversationwebrequest) gives for its own conversation, and answer 404 for a conversation the person may not see, 400 for an id that is not a positive whole number. Use them with [`transcript`](#transcriptoptions) and [`usage`](#conversationwebrequest), for example to show a subagent's own work.
+- Since 0.26.0 (experimental), `imageOf(conversation, entry, index)` gives one image of a stored message, as `{ mimeType, data }` with `data` in base64, or undefined when the entry has no such image. The person must see the conversation, as for `transcriptOf`.
 
 ### `WebSession`
 
@@ -287,12 +289,149 @@ interface ConversationWebRequest extends WebRequest {
         readonly thinkingLevel: ModelThinkingLevel;
     };
     readonly linkedSessions: HumanLinkedSessions;
+    transcript(options?: TranscriptOptions): Promise<TranscriptPage>;
+    usage(): Promise<UsageState | undefined>;
+    subagents(): readonly WebSubagent[];
 }
 ```
 
 Since 0.16.0 · Stable
 
 Authoritative source metadata, plus request-lifetime human linked-session capabilities. An omitted `model` means the source has none. Metadata is a snapshot, not a promise that settings cannot change. A start rejects a source model, thinking level, or folder changed while it waits.
+
+Since 0.26.0, experimental, it also reads this conversation's stored transcript and its usage totals. Both read only the bound conversation, which the server already checked that the person may see.
+
+- `transcript(options)`: a page of the conversation's stored entries, oldest first: its own and those it inherited from a fork, with the ones a compaction removed. Each message and each part carries `tokens`, the figure Pi's own meter counts for it, so a dashboard matches the context ring. Image bytes are left out; an image keeps only its type and the tokens the meter counts for it. `full: false` (the default) clips long text for reading, and `tokens` still counts all of it. Read pages with `after` until `more` is false. A page holds 100 entries by default and 200 at most.
+- `usage()`: the conversation's `pi.usage` totals, by `provider/model` and by tool, with cost. Undefined before the first response.
+- `subagents()`: the subagents this session started, each with its own conversation, which a person can open. Empty when it started none. See [`WebSubagent`](#websubagent).
+
+### `WebSubagent`
+
+```ts
+interface WebSubagent {
+    readonly name: string;
+    readonly conversationId: number;
+    readonly busy: boolean;
+    readonly waiting?: true;
+    readonly failed?: true;
+    readonly stopped?: true;
+    readonly asked?: string;
+    readonly askedAt?: number;
+    readonly answeredAt?: number;
+    readonly error?: string;
+    readonly reporting?: true;
+}
+```
+
+Since 0.26.0 · Experimental
+
+One subagent of a session: its name, its own conversation (open it with the app's normal navigation), whether it is busy or waits for an approval or a provider's limit, whether it failed or was stopped, the message it was given and when, when it answered, why it failed, and whether its answer is on its way to the session.
+
+### `TranscriptOptions`
+
+```ts
+interface TranscriptOptions {
+    after?: number;
+    limit?: number;
+    full?: boolean;
+}
+```
+
+Since 0.26.0 · Experimental
+
+- `after`: entries newer than this id, oldest first. Absent or 0 starts at the beginning.
+- `limit`: how many entries, from 1 to 200. 100 by default. Other values throw, and the route answers 400.
+- `full`: true for the text as it was stored. False or absent clips a long text for reading, and `tokens` still counts the whole of it.
+
+### `TranscriptPage`
+
+```ts
+interface TranscriptPage {
+    readonly entries: readonly TranscriptEntry[];
+    readonly last: number;
+    readonly more: boolean;
+}
+```
+
+Since 0.26.0 · Experimental
+
+- `entries`: the page's entries, oldest first.
+- `last`: the newest entry's id, or `after` when the page was empty. Give it as the next page's `after`.
+- `more`: true when more entries follow.
+
+### `TranscriptEntry`
+
+```ts
+interface TranscriptEntry {
+    readonly id: number;
+    readonly kind: string;
+    readonly at?: number;
+    readonly head?: number;
+    readonly data?: unknown;
+    readonly edits?: readonly TranscriptEdit[];
+    readonly messages?: readonly TranscriptMessage[];
+}
+```
+
+Since 0.26.0 · Experimental
+
+One stored entry: its id, its kind (`pi.user`, `pi.assistant`, `pi.compaction`, or a kind of Pi Pocket's own), when its first message was made, the first entry of the active context that it selects (`head`; a compaction's head, or a reset's own id), its own payload (`data`, such as a compaction's `reason`), the edits it makes to earlier entries, and the messages it adds to the model's context. `data` and the kinds' fields can change in any release.
+
+### `TranscriptEdit`
+
+```ts
+type TranscriptEdit =
+    | { target: number; action: "omit" }
+    | { target: number; action: "replace"; messages: readonly TranscriptMessage[] };
+```
+
+Since 0.26.0 · Experimental
+
+A change to what the entry `target` gives the model: leave it out, or give these messages instead. Pi Pocket's own sessions make none; a session continued from Pi's may have its context edits.
+
+### `TranscriptMessage`
+
+```ts
+type TranscriptMessage =
+    | { role: "system"; content: string; tokens: number; sections?: …; tools?: …; toolsRemoved?: … }
+    | { role: "user"; parts: readonly TranscriptPart[]; tokens: number }
+    | { role: "assistant"; parts: readonly TranscriptPart[]; tokens: number; … }
+    | { role: "toolResult"; callId: string; name: string; parts: readonly TranscriptPart[]; tokens: number; isError: boolean };
+```
+
+Since 0.26.0 · Experimental
+
+A message as the transcript stores it, with the image bytes left out. `tokens` is Pi's meter's figure for the whole message, which is what the context ring counts. A system message carries the sections it set (`null` removes one), the tools it added, and the names of the tools it removed. An assistant message carries its provider, model, `usage`, `stopReason`, `error`, and `durationMs`.
+
+### `TranscriptPart`
+
+```ts
+type TranscriptPart =
+    | { type: "text"; text: string; tokens: number; clipped?: number }
+    | { type: "thinking"; text: string; tokens: number; redacted?: boolean; clipped?: number }
+    | { type: "toolCall"; id: string; name: string; arguments: unknown; tokens: number }
+    | { type: "image"; mimeType?: string; tokens: number };
+```
+
+Since 0.26.0 · Experimental
+
+A part of a message with its own price in tokens. `clipped` is the text's whole length when `full` was not asked for.
+
+### `TranscriptTool`
+
+```ts
+interface TranscriptTool {
+    readonly name: string;
+    readonly description?: string;
+    readonly parameters?: unknown;
+    readonly tokens: number;
+    readonly source?: string;
+}
+```
+
+Since 0.26.0 · Experimental
+
+A tool as a system message defines it, with the tokens its definition costs in the request. `source` is the extension that registered a tool of that name, as the registry knows it now; it is left out for a tool the registry does not list.
 
 ### `HumanLinkedSessions`
 
