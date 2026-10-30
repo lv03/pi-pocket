@@ -43,6 +43,7 @@ A drop-in extension stays when Pi Pocket updates, and the owner can turn it off 
 - [systemd.md](systemd.md): running Pi Pocket as a systemd service, with a template unit whose instance name is the access mode.
 - [map.md](map.md): where each part of the code is, and how to add the usual things.
 - [architecture.md](architecture.md): how the parts depend on each other, and the orders that they need.
+- [pi-durable-implementation.md](pi-durable-implementation.md): Pi Pocket 在 Pi Durable 之上的完整实现说明（中文）。
 - [features.md](features.md): what each feature does, as people use it.
 - [release-notes.md](release-notes.md): how to write the notes of a release.
 - [../SECURITY.md](../SECURITY.md): what Pi Pocket protects, and what it does not.
