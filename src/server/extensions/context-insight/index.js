@@ -2342,7 +2342,7 @@ export default async function setup(pocket) {
     }
 
     function AgentHistory({ id }) {
-        const page = usePages("history/" + id + "/messages", "rows");
+        const page = usePages("history/" + id + "/messages?full=1", "rows");
 
         useEffect(() => {
             void page.load(true);
@@ -2585,16 +2585,27 @@ export default async function setup(pocket) {
         useEffect(() => pocket.onConversation(setId), []);
 
         const stats = data?.stats;
-        const historyPath = (kind) =>
-            id
-                ? "history/" +
-                  id +
-                  "/" +
-                  kind +
-                  (stats?.through !== undefined
-                      ? "?through=" + encodeURIComponent(stats.through)
-                      : "")
-                : null;
+
+        const historyPath = (kind) => {
+            if (!id) {
+                return null;
+            }
+
+            const query = new URLSearchParams();
+
+            if (stats?.through !== undefined) {
+                query.set("through", stats.through);
+            }
+
+            if (["files", "commands", "messages"].includes(kind)) {
+                query.set("full", "1");
+            }
+
+            const suffix = query.toString();
+
+            return "history/" + id + "/" + kind + (suffix === "" ? "" : "?" + suffix);
+        };
+
         const stepPage = usePages(
             historyPath("steps"),
             "rows",
@@ -2619,6 +2630,15 @@ export default async function setup(pocket) {
             stats?.commands ?? [],
             stats?.commandsMore,
         );
+
+        useEffect(() => {
+            const page = tab === "files" ? filePage : tab === "commands" ? commandPage : null;
+
+            if (page !== null && !page.loaded && !page.busy) {
+                void page.load(true);
+            }
+        }, [tab, id, stats?.through]);
+
         const steps = [...stepPage.rows].sort((a, b) => a.index - b.index);
         const events = [...eventPage.rows].sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || a.id - b.id);
         const step =
@@ -3270,7 +3290,10 @@ export default async function setup(pocket) {
                         html`<div class="ci-kpi"><small>${t(label)}</small><b>${value}</b></div>`,
                 )}
             </div>
-            <div class="ci-hint">${t("Dated usage in the selected days.")} ${state.loading || state.cancelled || state.failed.length > 0 || !accounting.complete ? t("Accounting is incomplete.") : t("Accounting is complete.")}</div>
+            <div class="ci-hint">
+                ${t("Dated usage in the selected days.")}
+                ${state.loading || state.cancelled || state.failed.length > 0 || !accounting.complete ? t("Accounting is incomplete.") : t("Accounting is complete.")}
+            </div>
             <details class="ci-details">
                 <summary>${t("Usage accounting")}</summary>
                 <div class="ci-hint">${t("Undated usage is excluded from date filters.")}</div>

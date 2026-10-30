@@ -49,6 +49,7 @@ const Preferences = defineDoc<{ users: Record<string, Record<string, string | nu
 interface Cached {
     entries: TranscriptEntry[];
     chars: number;
+    full: boolean;
     /** The newest entry id read. */
     last: number;
     truncated: boolean;
@@ -180,8 +181,9 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
     /** Read what is new into a conversation's cache; a page already read is not read again. */
     async function readWith(
         id: number,
-        page: (after: number, limit: number) => Promise<TranscriptPage>,
+        page: (after: number, limit: number, full: boolean) => Promise<TranscriptPage>,
         usageOf: () => Promise<UsageState | null>,
+        full = false,
         signal?: AbortSignal,
     ): Promise<{ cached: Cached; usage: UsageState | null; added: boolean }> {
         const previous = pending.get(id);
@@ -200,9 +202,17 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
 
             const before = cache.get(id);
             const cached: Cached = before
-                ? { ...before, entries: [...before.entries] }
-                : { entries: [], chars: 0, last: 0, truncated: false, at: 0 };
+                ? {
+                      ...before,
+                      entries: full && !before.full ? [] : before.entries,
+                      chars: full && !before.full ? 0 : before.chars,
+                      last: full && !before.full ? 0 : before.last,
+                      model: full && !before.full ? undefined : before.model,
+                      full: before.full || full,
+                  }
+                : { entries: [], chars: 0, last: 0, truncated: false, at: 0, full };
             let added = false;
+            let copied = false;
 
             // Every page participates in the fold. A response is paged; its source history is not clipped.
             for (;;) {
@@ -215,7 +225,7 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
                     );
                 }
 
-                const pageOf = await page(cached.last, PAGE);
+                const pageOf = await page(cached.last, PAGE, full);
 
                 if (pageOf.entries.length === 0) {
                     break;
@@ -229,6 +239,11 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
                 }
 
                 const fresh = pageOf.entries.filter((entry) => entry.id > cached.last);
+
+                if (!copied) {
+                    cached.entries = [...cached.entries];
+                    copied = true;
+                }
 
                 cached.entries.push(...fresh);
                 cached.chars += JSON.stringify(fresh).length;
@@ -251,6 +266,7 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
             }
 
             cached.usage = usage;
+            cached.full ||= full;
             cached.at = Date.now();
             remember(id, cached);
 
@@ -267,15 +283,17 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
     /** Read the bound conversation. */
     function read(
         request: ConversationWebRequest,
+        full = false,
     ): Promise<{ cached: Cached; usage: UsageState | null; added: boolean }> {
         return readWith(
             Number(request.conversation.id),
-            async (after, limit) => {
-                const page = await request.transcript({ after, limit, full: true });
+            async (after, limit, full) => {
+                const page = await request.transcript({ after, limit, full });
 
                 return page;
             },
             async () => (await request.usage()) ?? null,
+            full,
             request.signal,
         );
     }
@@ -284,11 +302,13 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
     function readOf(
         request: WebRequest,
         id: number,
+        full = false,
     ): Promise<{ cached: Cached; usage: UsageState | null; added: boolean }> {
         return readWith(
             id,
-            (after, limit) => request.transcriptOf(id, { after, limit, full: true }),
+            (after, limit, full) => request.transcriptOf(id, { after, limit, full }),
             async () => (await request.usageOf(id)) ?? null,
+            full,
             request.signal,
         );
     }
@@ -296,8 +316,9 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
     /** Read what is new, then fold it; a fold already at the newest entry is reused. */
     async function stats(
         request: ConversationWebRequest,
+        full = false,
     ): Promise<{ model: ContextModel; cached: Cached }> {
-        const { cached, usage, added } = await read(request);
+        const { cached, usage, added } = await read(request, full);
 
         const activity =
             typeof request.toolActivity === "function" ? await request.toolActivity() : [];
@@ -320,6 +341,59 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
         return { model: cached.model, cached };
     }
 
+    function shortLine(value: unknown, limit = 240): string | undefined {
+        if (typeof value !== "string" || value === "") {
+            return undefined;
+        }
+
+        const line = value.trim().split("\n")[0] ?? "";
+
+        return line.length <= limit ? line : `${line.slice(0, limit)}…`;
+    }
+
+    function fileSummary(file: ContextModel["files"][number]) {
+        return {
+            ...file,
+            ops: file.ops.map((operation) => {
+                const {
+                    output: _output,
+                    details: _details,
+                    arguments: _arguments,
+                    matches: _matches,
+                    ...summary
+                } = operation;
+
+                return {
+                    ...summary,
+                    ...(shortLine(operation.output) === undefined
+                        ? {}
+                        : { outputPreview: shortLine(operation.output) }),
+                    detailsAvailable: operation.details !== undefined,
+                };
+            }),
+        };
+    }
+
+    function commandSummary(command: ContextModel["commands"][number]) {
+        const { fullOutput: _fullOutput, details: _details, ...summary } = command;
+
+        return {
+            ...summary,
+            output: shortLine(command.fullOutput ?? command.output) ?? "",
+            detailsAvailable: command.details !== undefined,
+        };
+    }
+
+    function commSummary(comm: ContextModel["comms"][number]) {
+        const text = shortLine(comm.text, 700) ?? "";
+
+        return {
+            ...comm,
+            text,
+            ...(text.length < comm.text.length ? { clipped: comm.text.length } : {}),
+        };
+    }
+
     /** Bound list responses keep every older row available through the history route. */
     function trimmed(model: ContextModel) {
         const cut = Math.max(0, model.steps.length - MAX_STEPS);
@@ -340,13 +414,13 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
             events: events.slice(-MAX_EVENTS),
             eventsMore: Math.max(0, events.length - MAX_EVENTS),
             eventsTotal: events.length,
-            files: model.files.slice(0, 120),
+            files: model.files.slice(0, 120).map(fileSummary),
             filesMore: Math.max(0, model.files.length - 120),
             filesTotal: model.files.length,
-            commands: model.commands.slice(-MAX_COMMANDS),
+            commands: model.commands.slice(-MAX_COMMANDS).map(commandSummary),
             commandsMore: Math.max(0, model.commands.length - MAX_COMMANDS),
             commandsTotal: model.commands.length,
-            comms: model.comms.slice(-300),
+            comms: model.comms.slice(-300).map(commSummary),
             commsMore: Math.max(0, model.comms.length - 300),
             commsTotal: model.comms.length,
             sections: model.sections,
@@ -502,7 +576,8 @@ export default function createContextInsight(host: PocketHost, web: ExtensionWeb
         "GET",
         "history/:source/:kind",
         async (request) => {
-            const { model: current, cached } = await stats(checked(request));
+            const full = request.query.get("full") === "1" || request.params.kind === "comms";
+            const { model: current, cached } = await stats(checked(request), full);
             const { entries, through } = revision(request, cached);
             const model =
                 through === cached.last

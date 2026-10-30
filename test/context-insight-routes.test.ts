@@ -704,6 +704,26 @@ test("insight applies historical IANA offsets across daylight saving time", asyn
     assert.equal((await call(`insight/${id}?zone=Not_A_Zone`)).status, 400);
 });
 
+test("session summaries use clipped transcript text and history loads full text on demand", async () => {
+    const id = await newSession(app);
+    const long = "LONG_CONTEXT_TEXT_" + "x".repeat(12_000);
+    const entry = await append(id, UserEntry, [
+        { role: "user", content: long, timestamp: 1_700_000_020_000 } as Message,
+    ]);
+
+    await body(`session/${id}`);
+    const light = await body(`history/${id}/messages?limit=200`);
+    const lightEntry = light.rows.find((row: { id: number }) => row.id === Number(entry.id));
+    const lightText = lightEntry.messages[0].parts[0];
+
+    assert.ok(lightText.text.length < long.length);
+    assert.equal(lightText.clipped, long.length);
+    const full = await body(`history/${id}/messages?full=1&limit=200`);
+    const fullEntry = full.rows.find((row: { id: number }) => row.id === Number(entry.id));
+
+    assert.equal(fullEntry.messages[0].parts[0].text, long);
+});
+
 test("session catalog includes all sessions beyond the old 60-row boundary", async () => {
     for (let index = 0; index < 64; index++) {
         await newSession(app);
